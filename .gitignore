@@ -1,0 +1,11 @@
+node_modules/
+data/*.sqlite
+data/*.sqlite-journal
+logs/*.log
+.env
+.DS_Store
+npm-debug.log*
+*.swp
+*.swo
+.vscode/
+.idea/

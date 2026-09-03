@@ -631,6 +631,33 @@ main {
 }
 .seat-stack { font-size: 0.7rem; color: var(--accent2); margin-top: 2px; }
 .seat-status { font-size: 0.65rem; color: var(--text-dim); margin-top: 2px; }
+/* ===== 座位亮牌（摊牌 / 弃牌获胜秀牌） ===== */
+.seat-cards {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  margin-top: 4px;
+}
+.seat-cards .card {
+  width: 24px;
+  height: 34px;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.seat-cards .card .corner { font-size: 0.35rem; }
+.seat-cards .card .corner.top-left { top: 2px; left: 2px; }
+.seat-cards .card .corner.bottom-right { bottom: 2px; right: 2px; }
+.seat-cards .card .rank { font-size: 0.45rem; }
+.seat-cards .card .suit-symbol { font-size: 0.35rem; }
+.seat-cards .card .center-suit { font-size: 0.7rem; margin-top: -1px; }
+.seat-hand-label {
+  font-size: 0.6rem;
+  color: var(--accent2);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .seat.pos-0 { bottom: 4%; left: 50%; transform: translateX(-50%); }
 .seat.pos-1 { bottom: 18%; left: 12%; }
 .seat.pos-2 { top: 18%; left: 8%; }
@@ -914,6 +941,22 @@ main {
   white-space: nowrap;
 }
 .player-result-amount.winner { color: var(--green); }
+.player-result-hand {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+/* ===== 摊牌输家（结算弹窗） ===== */
+.showdown-block { margin-top: 10px; }
+.showdown-heading {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  letter-spacing: 2px;
+  margin: 6px 0;
+}
+.player-result-loser { opacity: 0.72; }
+.player-result-loser .player-result-name { color: var(--text-dim); font-weight: 500; }
 /* ===== POT SUMMARY IN MODAL ===== */
 .pot-summary {
   text-align: center;
@@ -1124,6 +1167,8 @@ main {
   .seat-name { font-size: 0.65rem; }
   .seat-stack { font-size: 0.55rem; }
   .seat-status { font-size: 0.5rem; }
+  .seat-cards .card { width: 20px; height: 28px; }
+  .seat-hand-label { font-size: 0.5rem; }
   .seat.pos-0 { bottom: 2%; }
   .seat.pos-1 { bottom: 16%; left: 6%; }
   .seat.pos-2 { top: 16%; left: 4%; }
@@ -1266,6 +1311,8 @@ main {
   .seat { width: 78px; padding: 4px 5px; }
   .seat-name { font-size: 0.6rem; }
   .seat-stack { font-size: 0.48rem; }
+  .seat-cards .card { width: 17px; height: 24px; }
+  .seat-hand-label { font-size: 0.45rem; }
   .board .card { width: 30px; height: 42px; }
 }
 

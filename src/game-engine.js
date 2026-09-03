@@ -509,9 +509,13 @@ function showFoldWinCards(room, token, { showCount, side } = {}) {
   }
   const count = Number(showCount);
   if (count !== 1 && count !== 2) throw new Error('秀牌数量必须为 1 或 2');
-  const cards = count === 2
-    ? [...winner.holeCards]
-    : [winner.holeCards[Number(side) === 1 ? 1 : 0]];
+  let cards;
+  if (count === 2) {
+    cards = [...winner.holeCards];
+  } else {
+    if (!Number.isInteger(side) || (side !== 0 && side !== 1)) throw new Error('秀牌面无效');
+    cards = [winner.holeCards[side]];
+  }
 
   hand.shownCards = { token: winner.token, seatIndex: winner.seatIndex, cards };
   hand.winners = hand.winners.map((entry) => (
@@ -742,9 +746,10 @@ function playerView(room, viewerToken, player) {
   const isViewer = player.token === viewerToken;
   const viewer = room.players.find((entry) => entry.token === viewerToken);
   const canManage = viewer?.isHost && !isViewer && !player.isHost;
-  // 秀牌后所有人可见该赢家的手牌
+  // 秀牌后所有人可见该赢家的手牌；摊牌只亮未弃牌玩家的牌，弃牌手牌永不展示
   const shown = room.hand?.shownCards ?? null;
-  const revealCards = isViewer || room.hand?.revealed || (shown !== null && shown.token === player.token);
+  const showdownReveal = room.hand?.revealed && player.inHand && !player.folded;
+  const revealCards = isViewer || showdownReveal || (shown !== null && shown.token === player.token);
   return {
     ...(canManage ? { targetToken: player.token } : {}),
     token: isViewer ? player.token : undefined,

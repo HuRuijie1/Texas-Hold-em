@@ -63,6 +63,38 @@ function foldWinTable() {
   return { manager, store, code, winnerToken, folderToken: folder.token };
 }
 
+function foldShowdownTable() {
+  const store = new MemoryStore();
+  const manager = new GameManager(store);
+  const created = manager.createRoom({ token: 'a', roomName: 'Test', playerName: 'Alice', config: { maxSeats: 6, smallBlind: 5, bigBlind: 10, startingStack: 1000 } });
+  const code = created.room.code;
+  manager.joinRoom(code, { token: 'b', playerName: 'Bob' });
+  manager.joinRoom(code, { token: 'c', playerName: 'Carol' });
+  manager.seatPlayer(code, 'a', 0);
+  manager.seatPlayer(code, 'b', 1);
+  manager.seatPlayer(code, 'c', 2);
+  for (const player of manager.getRoom(code).players) manager.toggleReady(code, player.token);
+
+  const room = manager.getRoom(code);
+  const folder = room.players.find((player) => player.seatIndex === room.hand.actionQueue[0]);
+  manager.applyAction(code, folder.token, { type: 'fold' });
+
+  // 剩余两人强制全下，进入摊牌
+  for (const player of manager.getRoom(code).players) {
+    if (player.folded) continue;
+    player.stack = 0;
+    player.allIn = true;
+    player.inHand = true;
+    player.streetContribution = 100;
+    player.handContribution = 100;
+  }
+  manager.getRoom(code).hand.actionQueue = [];
+  manager.resolveHand(manager.getRoom(code));
+
+  const liveCards = new Map(manager.getRoom(code).players.map((player) => [player.seatIndex, [...player.holeCards]]));
+  return { manager, code, folderToken: folder.token, folderSeat: folder.seatIndex, liveCards };
+}
+
 test('fold-win creates showOffer visible only to the human winner', () => {
   const { manager, code, winnerToken, folderToken } = foldWinTable();
 
@@ -115,6 +147,45 @@ test('double show is rejected', () => {
   const { manager, code, winnerToken } = foldWinTable();
   manager.showCards(code, winnerToken, { showCount: 2 });
   assert.throws(() => manager.showCards(code, winnerToken, { showCount: 2 }), /已经秀过牌了/);
+});
+
+test('folded cards stay hidden from other viewers at showdown', () => {
+  const { manager, code, folderToken, folderSeat, liveCards } = foldShowdownTable();
+  assert.equal(manager.getRoom(code).hand.revealed, true);
+
+  for (const viewer of ['a', 'b', 'c']) {
+    const view = manager.getRoomView(code, viewer);
+    const folderView = view.players.find((player) => player.seatIndex === folderSeat);
+    assert.equal(folderView.folded, true);
+    if (viewer === folderToken) {
+      assert.deepEqual(folderView.holeCards, liveCards.get(folderSeat));
+    } else {
+      assert.deepEqual(folderView.holeCards, ['??', '??']);
+    }
+    assert.equal(folderView.handLabel, null);
+  }
+});
+
+test('live showdown hands are revealed to every viewer', () => {
+  const { manager, code, liveCards } = foldShowdownTable();
+  for (const viewer of ['a', 'b', 'c']) {
+    const view = manager.getRoomView(code, viewer);
+    for (const player of view.players) {
+      if (player.folded) continue;
+      assert.deepEqual(player.holeCards, liveCards.get(player.seatIndex));
+    }
+  }
+});
+
+test('invalid show side is rejected', () => {
+  const { manager, code, winnerToken } = foldWinTable();
+  assert.throws(() => manager.showCards(code, winnerToken, { showCount: 1, side: 2 }), /秀牌面无效/);
+  assert.throws(() => manager.showCards(code, winnerToken, { showCount: 1, side: null }), /秀牌面无效/);
+  assert.throws(() => manager.showCards(code, winnerToken, { showCount: 1, side: '1' }), /秀牌面无效/);
+
+  const realCards = manager.getRoom(code).players.find((p) => p.token === winnerToken).holeCards;
+  manager.showCards(code, winnerToken, { showCount: 1, side: 1 });
+  assert.deepEqual(manager.getRoomView(code, winnerToken).hand.shownCards.cards, [realCards[1]]);
 });
 
 test('showdown hands cannot use fold-win show', () => {

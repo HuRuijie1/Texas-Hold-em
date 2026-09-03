@@ -2194,6 +2194,53 @@
       });
     }
 
+    // 摊牌局：列出其余摊牌玩家的手牌（输家置灰），弃牌获胜局无此区块
+    if (room.hand.revealed) {
+      const winnerNames = new Set(winners.map((winner) => winner.name));
+      const showdownLosers = room.players.filter((player) => (
+        player.inHand
+        && !player.folded
+        && !winnerNames.has(player.name)
+        && Array.isArray(player.holeCards)
+        && player.holeCards.length === 2
+        && player.holeCards[0] !== '??'
+      ));
+      if (showdownLosers.length > 0) {
+        const showdownBlock = document.createElement('div');
+        showdownBlock.className = 'showdown-block';
+
+        const heading = document.createElement('div');
+        heading.className = 'showdown-heading';
+        heading.textContent = '本局摊牌';
+        showdownBlock.appendChild(heading);
+
+        for (const player of showdownLosers) {
+          const resultDiv = document.createElement('div');
+          resultDiv.className = 'player-result player-result-loser';
+
+          const nameDiv = document.createElement('div');
+          nameDiv.className = 'player-result-name';
+          nameDiv.textContent = player.name;
+
+          const cardsDiv = document.createElement('div');
+          cardsDiv.className = 'player-result-cards';
+          player.holeCards.forEach((card) => cardsDiv.appendChild(renderCard(card)));
+
+          resultDiv.appendChild(nameDiv);
+          resultDiv.appendChild(cardsDiv);
+          if (player.handLabel) {
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'player-result-hand';
+            labelDiv.textContent = player.handLabel;
+            resultDiv.appendChild(labelDiv);
+          }
+          showdownBlock.appendChild(resultDiv);
+        }
+
+        modalResults.appendChild(showdownBlock);
+      }
+    }
+
     // 弃牌获胜的真人赢家：选择是否秀牌（服务端 room:state 广播后所有人看到结果）
     const hand = room.hand;
     if (hand.status === 'finished' && !hand.revealed && !hand.shownCards
@@ -2454,6 +2501,21 @@ nextHandBtn.addEventListener('click', () => {
     return actionEl;
   }
 
+  // 摊牌局亮出存活玩家手牌；弃牌获胜后的秀牌也上桌
+  function getSeatRevealedCards(room, seat) {
+    const hand = room.hand;
+    if (!hand || hand.status !== 'finished') return null;
+    const shown = hand.shownCards;
+    if (shown && shown.seatIndex === seat.index && Array.isArray(shown.cards) && shown.cards.length > 0) {
+      return { cards: shown.cards, label: null };
+    }
+    if (!hand.revealed) return null;
+    const player = seat.player;
+    if (!player || !player.inHand || player.folded) return null;
+    if (!Array.isArray(player.holeCards) || player.holeCards.length !== 2 || player.holeCards[0] === '??') return null;
+    return { cards: player.holeCards, label: player.handLabel || null };
+  }
+
   // 增强版座位渲染函数
   function enhancedRenderSeatGrid(room) {
     elements.seatGrid.innerHTML = '';
@@ -2562,6 +2624,21 @@ nextHandBtn.addEventListener('click', () => {
       status.textContent = seatText(room, seat);
 
       card.append(title, stack);
+
+      // 摊牌/秀牌：座位上亮出手牌
+      const revealedSeatCards = getSeatRevealedCards(room, seat);
+      if (revealedSeatCards) {
+        const seatCards = document.createElement('div');
+        seatCards.className = 'seat-cards';
+        revealedSeatCards.cards.forEach((cardCode) => seatCards.appendChild(renderCard(cardCode)));
+        card.appendChild(seatCards);
+        if (revealedSeatCards.label) {
+          const handLabel = document.createElement('div');
+          handLabel.className = 'seat-hand-label';
+          handLabel.textContent = revealedSeatCards.label;
+          card.appendChild(handLabel);
+        }
+      }
 
       // 本轮已投入筹码
       if (room.hand?.status === 'running' && seat.player.streetContribution > 0) {

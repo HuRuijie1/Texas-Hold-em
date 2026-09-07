@@ -148,6 +148,7 @@ function normalizeZjhHand(hand) {
     winners: Array.isArray(hand.winners) ? [...hand.winners] : [],
     revealed: Boolean(hand.revealed ?? false),
     forcedShowdown: Boolean(hand.forcedShowdown ?? false),
+    showWinners: Array.isArray(hand.showWinners) ? [...hand.showWinners] : [],
     // 比牌互看记录：{ [viewerToken]: Set(座位号) }，序列化时转数组
     compareSeen: hand.compareSeen && typeof hand.compareSeen === 'object'
       ? Object.fromEntries(Object.entries(hand.compareSeen).map(([key, seats]) => [key, (Array.isArray(seats) ? seats : []).map(Number)]))
@@ -584,8 +585,10 @@ function zjhPlayerView(room, viewerToken, player) {
   const isViewer = player.token === viewerToken;
   const compareSeenSeats = room.hand?.compareSeen?.[viewerToken] ?? [];
   const showdownReveal = room.hand?.revealed && player.inHand && !player.folded;
+  // 结算后：自己始终能看到自己的牌
+  const settledSelf = isViewer && room.hand?.status === 'finished';
   // 自己的牌也要等「看牌」后才可见（闷牌阶段只发背面）
-  const revealCards = showdownReveal || compareSeenSeats.includes(player.seatIndex) || (isViewer && player.seen);
+  const revealCards = showdownReveal || compareSeenSeats.includes(player.seatIndex) || (isViewer && player.seen) || settledSelf;
   return {
     ...(room.players.find((entry) => entry.token === viewerToken)?.isHost && !isViewer && !player.isHost
       ? { targetToken: player.token }
@@ -631,11 +634,11 @@ export function zjhRoomSummary(room) {
   };
 }
 
-// 自己的手牌：闷牌阶段只发背面，看牌/被亮牌/摊牌后才发真实牌面
+// 自己的手牌：闷牌阶段只发背面，看牌/被亮牌/摊牌后才发真实牌面；结算后自己始终可见
 function selfHoleCards(room, player) {
   if (!player.inHand) return [...player.holeCards];
   const compareSeen = room.hand?.compareSeen?.[player.token]?.includes(player.seatIndex);
-  if (player.seen || compareSeen || room.hand?.revealed) return [...player.holeCards];
+  if (player.seen || compareSeen || room.hand?.revealed || room.hand?.status === 'finished') return [...player.holeCards];
   return ['??', '??', '??'];
 }
 
@@ -1086,6 +1089,7 @@ export class ZjhManager {
       winners: [],
       revealed: false,
       forcedShowdown: false,
+      showWinners: [],
       compareSeen: {},
       playerStreetActions: {},
     };
@@ -1152,7 +1156,6 @@ export class ZjhManager {
 
   resolveZjhHand(room) {
     if (!room.hand || room.hand.status !== 'running') return room.hand;
-
     const live = activePlayers(room);
     if (live.length === 1) return finishZjhByFold(room, this.store);
 

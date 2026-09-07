@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { GameManager } from '../src/game-engine.js';
+import { RoomStore } from '../src/store.js';
 import { ZjhManager, hydrateZjhRoom } from '../src/zjh-engine.js';
 import {
   compareZjhHands,
@@ -413,4 +417,45 @@ test('快照卫生：动作处理后房间不被挂内部引用，保存的快�
   polluted.__junk = { blob: 'x'.repeat(10_000) };
   manager.emit(polluted);
   assert.equal(store.rooms.get(code).__junk, undefined);
+});
+
+test('真实 RoomStore 连续保存快照体积保持有界（复现 __storeRef 生产事故）', () => {
+  // 生产事故机制：RoomStore 的预编译语句会缓存最近一次绑定的快照字符串，
+  // 一旦 store 引用被挂进房间，每次保存都会把上一次的快照嵌套进来，体积翻倍，
+  // 十几次保存后 JSON 超出 V8 字符串上限（约 512MB），tick 反复报 Invalid string length。
+  // 因此该测试必须使用真实 RoomStore 而非内存替身。
+  const dbPath = join(tmpdir(), `zjh-snapshot-regression-${process.pid}-${Date.now()}.sqlite`);
+  const store = new RoomStore(dbPath);
+  try {
+    const manager = new ZjhManager(store);
+    const created = manager.createRoom({
+      token: 'host',
+      roomName: 'SnapshotRegression',
+      playerName: 'Host',
+      config: { maxSeats: 4, ante: 5, baseStake: 5, startingStack: 300, maxRounds: 6 },
+    });
+    const code = created.room.code;
+    manager.addBot(code, 'host', 'beginner');
+    manager.addBot(code, 'host', 'intermediate');
+    manager.addBot(code, 'host', 'advanced');
+    manager.seatPlayer(code, 'host', 0);
+    manager.startHand(code, 'host');
+
+    let guard = 0;
+    let maxSize = 0;
+    while (manager.getRoom(code).hand.status === 'running' && guard < 400) {
+      manager.tick(Date.now() + guard * 6000);
+      guard += 1;
+      const size = JSON.stringify(store.loadRoom(code)).length;
+      maxSize = Math.max(maxSize, size);
+      assert.ok(size < 200_000, `快照体积失控：第 ${guard} 次保存后达 ${size}B（历史最大 ${maxSize}B）`);
+    }
+    assert.equal(manager.getRoom(code).hand.status, 'finished');
+    assert.ok(maxSize < 200_000, `快照历史最大体积 ${maxSize}B 超出正常量级`);
+  } finally {
+    store.close();
+    for (const suffix of ['', '-wal', '-shm']) {
+      rmSync(`${dbPath}${suffix}`, { force: true });
+    }
+  }
 });

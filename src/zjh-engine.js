@@ -729,7 +729,11 @@ export class ZjhManager {
   emit(room) {
     room.updatedAt = now();
     this.store.saveRoom(stripRuntime(room));
-    this.onUpdate(room);
+    try {
+      this.onUpdate(room);
+    } catch (error) {
+      console.error('emit onUpdate error:', error);
+    }
     return room;
   }
 

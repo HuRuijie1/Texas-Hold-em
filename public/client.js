@@ -1888,6 +1888,13 @@
 
   window.addEventListener('online', recoverConnectionOnForeground);
 
+  // 视口尺寸变化后重校准行动气泡的朝向与水平位置
+  let bubbleRelayoutTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(bubbleRelayoutTimer);
+    bubbleRelayoutTimer = setTimeout(relayoutActionBubbles, 120);
+  });
+
   socket.on('room:state', (room) => {
 
     if (!room) return;
@@ -2629,6 +2636,44 @@ nextHandBtn.addEventListener('click', () => {
     return { cards: player.holeCards, label: player.handLabel || null };
   }
 
+  // 行动气泡防裁剪/防遮挡：座位入局渲染后按真实空间决定气泡朝向（上下选空间大的一侧），
+  // 再把气泡水平钳制在牌桌容器内，保证任意座位数的任何位置气泡都完整可见
+  function placeActionBubble(card) {
+    const bubble = card.querySelector('.player-action');
+    const grid = elements.seatGrid;
+    if (!bubble || !grid || !grid.isConnected) return;
+
+    const gridRect = grid.getBoundingClientRect();
+    const seatRect = card.getBoundingClientRect();
+    const spaceAbove = seatRect.top - gridRect.top;
+    const spaceBelow = gridRect.bottom - seatRect.bottom;
+    const needed = bubble.offsetHeight + 10;
+
+    let position;
+    if (spaceAbove >= needed && spaceAbove >= spaceBelow) position = 'top';
+    else if (spaceBelow >= needed) position = 'bottom';
+    else position = spaceAbove >= spaceBelow ? 'top' : 'bottom';
+    card.dataset.position = position;
+
+    const centerX = seatRect.left - gridRect.left + seatRect.width / 2;
+    const margin = 6;
+    const bubbleWidth = bubble.offsetWidth;
+    const leftGap = centerX - bubbleWidth / 2;
+    const rightGap = gridRect.width - (centerX + bubbleWidth / 2);
+    let shift = 0;
+    if (leftGap < margin) shift = margin - leftGap;
+    else if (rightGap < margin) shift = -(margin - rightGap);
+    bubble.style.setProperty('--bubble-shift', `${Math.round(shift)}px`);
+  }
+
+  // 窗口尺寸变化后重新校准已有气泡的方向与水平位置
+  function relayoutActionBubbles() {
+    if (!elements.seatGrid) return;
+    elements.seatGrid.querySelectorAll('.seat').forEach((card) => {
+      if (card.querySelector('.player-action')) placeActionBubble(card);
+    });
+  }
+
   // 增强版座位渲染函数
   function enhancedRenderSeatGrid(room) {
     elements.seatGrid.innerHTML = '';
@@ -2680,18 +2725,6 @@ nextHandBtn.addEventListener('click', () => {
       card.style.left = `${x}%`;
       card.style.top = `${y}%`;
 
-      // 按实际坐标决定行动气泡方向
-      const isTop = y < 38;
-      const isBottom = y > 62;
-
-      if (isTop) {
-        card.dataset.position = 'top';
-      } else if (isBottom) {
-        card.dataset.position = 'bottom';
-      } else {
-        card.dataset.position = 'middle';
-      }
-
       // 庄家 / 小盲 / 大盲标记
       if (room.hand) {
         let badge = null;
@@ -2714,10 +2747,11 @@ nextHandBtn.addEventListener('click', () => {
       // 添加本轮操作信息
       const streetActions = getCurrentStreetActions(room);
       const playerStreetAction = streetActions[seat.index];
-      
+
       if (playerStreetAction) {
         const actionEl = createActionElement(playerStreetAction.type, playerStreetAction.amount);
         card.appendChild(actionEl);
+        card.classList.add('has-action');
       }
 
       const title = document.createElement('div');
@@ -2774,6 +2808,9 @@ nextHandBtn.addEventListener('click', () => {
       }
 
       elements.seatGrid.append(card);
+
+      // 座位进入 DOM 后才能测量真实空间，此时决定气泡朝向与水平钳制
+      placeActionBubble(card);
 
     });
   }
@@ -2882,10 +2919,6 @@ nextHandBtn.addEventListener('click', () => {
       if (room.hand?.actionSeat === seat.index) card.classList.add('active-turn');
       if (targetSeats.has(seat.index)) card.classList.add('compare-target');
 
-      const isTop = y < 38;
-      const isBottom = y > 62;
-      card.dataset.position = isTop ? 'top' : (isBottom ? 'bottom' : 'middle');
-
       if (room.hand && room.hand.dealerSeat === seat.index) {
         const badge = document.createElement('span');
         badge.className = 'seat-badge d';
@@ -2897,6 +2930,7 @@ nextHandBtn.addEventListener('click', () => {
       const playerStreetAction = streetActions[seat.index];
       if (playerStreetAction) {
         card.appendChild(createActionElement(playerStreetAction.type, playerStreetAction.amount));
+        card.classList.add('has-action');
       }
 
       const title = document.createElement('div');
@@ -2951,6 +2985,9 @@ nextHandBtn.addEventListener('click', () => {
       }
 
       elements.seatGrid.append(card);
+
+      // 座位进入 DOM 后才能测量真实空间，此时决定气泡朝向与水平钳制
+      placeActionBubble(card);
     });
   }
 

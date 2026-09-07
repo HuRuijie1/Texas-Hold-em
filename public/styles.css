@@ -546,10 +546,16 @@ main {
   border-color: var(--green) !important;
   animation: activePulse 1.5s ease-in-out infinite;
 }
+/* 座位的 backdrop-filter / transform 会创建层叠上下文，气泡的 z-index 出不了座位，
+   因此把带气泡和正在行动的座位整体抬高，避免被 DOM 靠后的相邻座位盖住 */
+.seat.has-action,
+.seat.active-turn { z-index: 3; }
 /* ===== PLAYER ACTION BUBBLES ===== */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+/* fill: forwards 会永久锁定最后一帧的 transform，因此居中位移必须写进关键帧，
+   否则动画结束后 translateX(-50%) 失效，气泡向右偏出座位被裁剪 */
+@keyframes actionBubbleIn {
+  from { opacity: 0; transform: translate(calc(-50% + var(--bubble-shift, 0px)), 8px); }
+  to { opacity: 1; transform: translate(calc(-50% + var(--bubble-shift, 0px)), 0); }
 }
 .player-action {
   position: absolute;
@@ -562,11 +568,11 @@ main {
   white-space: nowrap;
   background: var(--panel);
   border: 2px solid var(--border);
-  animation: fadeIn 0.3s ease forwards;
+  animation: actionBubbleIn 0.3s ease forwards;
   z-index: 20;
   pointer-events: none;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(calc(-50% + var(--bubble-shift, 0px)), 0);
 }
 /* 根据座位位置调整行动提示的方向 */
 .seat[data-position="top"] .player-action {
@@ -1472,10 +1478,10 @@ body.is-table-view .seat-name > span:last-child {
   flex: 0 0 auto;
 }
 
+/* 气泡不限制在座位宽度内，长文本（如"加注 100000"）按内容完整展开，
+   水平方向由 JS 的 --bubble-shift 钳制在牌桌容器内 */
 body.is-table-view .player-action {
-  max-width: calc(100% - 8px);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  width: max-content;
 }
 
 body.is-table-view .felt {

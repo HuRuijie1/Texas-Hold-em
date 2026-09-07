@@ -402,8 +402,17 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
   });
 
   const timer = setInterval(() => {
-    gameManager.tick();
-    zjhManager.tick();
+    // 单个引擎的异常不允许中断另一个引擎的 tick，更不允许以未捕获异常拖垮进程
+    try {
+      gameManager.tick();
+    } catch (error) {
+      console.error('gameManager.tick error:', error);
+    }
+    try {
+      zjhManager.tick();
+    } catch (error) {
+      console.error('zjhManager.tick error:', error);
+    }
   }, 1000);
   timer.unref();
 

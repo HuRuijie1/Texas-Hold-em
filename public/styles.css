@@ -1188,6 +1188,12 @@ main {
     top: -28px;
   }
 
+  /* 自己的座位贴近底栏，行动气泡挂在座位下方会被底栏盖住，改为显示在上方 */
+  .seat.viewer[data-position="bottom"] .player-action {
+    top: -28px;
+    bottom: auto;
+  }
+
   .bottom-bar {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto;
@@ -1934,22 +1940,34 @@ body.is-table-view .peek-btn {
 
   body.is-table-view .bottom-bar-hand {
     min-width: 144px;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    justify-content: center;
+    /* 炸金花看牌后有 3 张手牌，单行"标签+牌+按钮"放不下会溢出屏幕，
+       改为两行网格：第一行标签+翻牌按钮，第二行居中手牌 */
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'label peek'
+      'cards cards';
     align-items: center;
-    gap: 6px;
-    padding: 8px 10px;
+    gap: 3px 8px;
+    padding: 6px 8px;
+  }
+
+  body.is-table-view .bottom-bar-label {
+    /* 旧单行布局里被 1638 行隐藏；两行布局恢复显示 */
+    display: block;
+    grid-area: label;
+    text-align: left;
   }
 
   body.is-table-view .viewer-cards {
-    flex: 0 0 auto;
+    grid-area: cards;
+    min-width: 0;
     flex-wrap: nowrap;
     gap: 6px;
   }
 
   body.is-table-view .viewer-cards .card {
-    flex: 0 0 40px;
+    flex: 0 1 40px;
     width: 40px;
     height: 56px;
   }
@@ -1971,6 +1989,7 @@ body.is-table-view .peek-btn {
   }
 
   body.is-table-view .peek-btn {
+    grid-area: peek;
     flex: 0 0 auto;
     padding: 3px 6px;
     font-size: 0.62rem;
@@ -2019,9 +2038,9 @@ body.is-table-view .peek-btn {
   }
 
   body.is-table-view .viewer-cards .card {
-    flex: 0 0 38px;
-    width: 38px;
-    height: 54px;
+    flex: 0 1 36px;
+    width: 36px;
+    height: 52px;
   }
 
   body.is-table-view .peek-btn {
@@ -2266,4 +2285,136 @@ body.is-table-view .peek-btn {
     height: 18px;
     margin-top: -7px;
   }
+}
+
+/* ===== 炸金花 ===== */
+.game-type-row {
+  display: flex;
+  gap: 10px;
+  margin: 10px 0 2px;
+}
+
+.game-type-option {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.14));
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  background: rgba(255, 255, 255, 0.03);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.game-type-option:hover { border-color: var(--accent, #8f7bff); }
+
+.game-type-option:has(input:checked) {
+  border-color: var(--accent, #8f7bff);
+  background: rgba(143, 123, 255, 0.14);
+  font-weight: 600;
+}
+
+.game-type-option input { accent-color: var(--accent, #8f7bff); margin: 0; }
+
+.room-game-badge {
+  display: inline-block;
+  font-size: 0.62rem;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 6px;
+  margin-right: 6px;
+  background: rgba(78, 140, 255, 0.22);
+  color: #7fb0ff;
+  vertical-align: 2px;
+}
+
+.room-game-badge.zjh {
+  background: rgba(255, 176, 32, 0.2);
+  color: #ffb020;
+}
+
+.zjh-info {
+  font-size: 0.78rem;
+  color: var(--text-dim, #9aa0b4);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 176, 32, 0.25);
+  border-radius: 999px;
+  padding: 4px 14px;
+  margin-bottom: 6px;
+}
+
+/* 炸金花看牌状态徽章：闷牌蓝色 / 已看牌金色，座位上不再展示手牌 */
+.zjh-seen-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+  border: 1px solid;
+  pointer-events: none;
+}
+
+.zjh-seen-badge.seen {
+  color: #ffd479;
+  border-color: rgba(255, 191, 71, 0.75);
+  background: rgba(255, 176, 32, 0.16);
+  box-shadow: 0 0 8px rgba(255, 176, 32, 0.35);
+}
+
+.zjh-seen-badge.blind {
+  color: #8fc3f2;
+  border-color: rgba(91, 155, 213, 0.7);
+  background: rgba(91, 155, 213, 0.14);
+  box-shadow: 0 0 8px rgba(91, 155, 213, 0.3);
+}
+
+@media (max-width: 620px) {
+  .zjh-seen-badge {
+    font-size: 0.55rem;
+    padding: 1px 8px;
+    margin-top: 2px;
+  }
+}
+
+.zjh-action-grid { grid-template-columns: repeat(2, 1fr); }
+
+.btn-compare {
+  background: linear-gradient(135deg, #b8860b, #ffb020);
+  color: #221a00;
+  font-weight: 700;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 10px;
+  cursor: pointer;
+}
+
+.btn-compare:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn-compare.selecting {
+  background: linear-gradient(135deg, #ff5f5f, #ff9f43);
+  animation: compare-pulse 0.9s infinite alternate;
+}
+
+@keyframes compare-pulse {
+  from { filter: brightness(1); }
+  to { filter: brightness(1.25); }
+}
+
+.seat.compare-target {
+  border-color: #ffb020;
+  box-shadow: 0 0 0 2px rgba(255, 176, 32, 0.55), 0 0 18px rgba(255, 176, 32, 0.35);
+  cursor: pointer;
+}
+
+.zjh-cost-preview {
+  font-size: 0.68rem;
+  color: var(--text-dim, #9aa0b4);
+  white-space: nowrap;
+  align-self: center;
 }

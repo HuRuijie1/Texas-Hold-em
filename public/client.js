@@ -60,6 +60,8 @@
 
     clockSynced: false,
 
+    zjhCompareSelecting: false,
+
   };
 
   const BOT_LEVEL_LABELS = {
@@ -375,6 +377,16 @@
     headerSecondary: $('headerSecondary'),
     copyReportBtn: $('copyReportBtn'),
     soundToggleBtn: $('soundToggleBtn'),
+    zjhInfo: $('zjhInfo'),
+    texasConfigRow: $('texasConfigRow'),
+    zjhConfigRow: $('zjhConfigRow'),
+    zjhAnte: $('zjhAnte'),
+    zjhBaseStake: $('zjhBaseStake'),
+    zjhStakeCap: $('zjhStakeCap'),
+    zjhMaxRounds: $('zjhMaxRounds'),
+    zjhStartingStack: $('zjhStartingStack'),
+    zjhMaxSeats: $('zjhMaxSeats'),
+    zjhActionTimeout: $('zjhActionTimeout'),
 
   };
 
@@ -705,9 +717,17 @@
 
       const info = document.createElement('div');
 
+      const nameRow = document.createElement('div');
+
+      const badge = document.createElement('span');
+      badge.className = room.gameType === 'zjh' ? 'room-game-badge zjh' : 'room-game-badge';
+      badge.textContent = room.gameType === 'zjh' ? '炸金花' : '德州';
+
       const name = document.createElement('strong');
 
       name.textContent = room.name;
+
+      nameRow.append(badge, name);
 
       const meta = document.createElement('div');
 
@@ -715,7 +735,7 @@
 
       meta.textContent = `${room.code} · ${room.seatsTaken}/${room.seatsTotal} · ${room.handStatus === 'running' ? '进行中' : '等待中'}`;
 
-      info.append(name, meta);
+      info.append(nameRow, meta);
 
       const button = document.createElement('button');
 
@@ -791,6 +811,9 @@
 
     const realCards = cards.filter((card) => card && card !== '??');
 
+    // 未看牌（炸金花闷牌）：显示等量牌背，且不提供查看按钮
+    const hiddenBacks = realCards.length ? 0 : cards.filter((card) => card === '??').length;
+
     if (!cards.length) {
 
       elements.viewerCards.innerHTML = '';
@@ -807,15 +830,15 @@
 
     }
 
-    elements.peekCardsBtn.classList.remove('hidden');
+    elements.peekCardsBtn.classList.toggle('hidden', !realCards.length);
 
-    const key = `${realCards.join(',')}|${state.peekCards ? 'F' : 'B'}`;
+    const key = `${realCards.join(',')}|b${hiddenBacks}|${state.peekCards ? 'F' : 'B'}`;
 
     if (key === state.viewerCardsKey) return;
 
     const prevCount = state.viewerCardsKey ? state.viewerCardsKey.split('|')[0].split(',').filter(Boolean).length : 0;
 
-    const isNewDeal = realCards.length > prevCount;
+    const isNewDeal = (realCards.length + hiddenBacks) > prevCount;
 
     state.viewerCardsKey = key;
 
@@ -833,6 +856,18 @@
       elements.viewerCards.append(cardEl);
 
     });
+
+    for (let i = 0; i < hiddenBacks; i += 1) {
+
+      const backEl = renderCard('', true);
+
+      backEl.classList.add('dealt-fade');
+
+      backEl.style.animationDelay = `${(realCards.length + i) * 0.08}s`;
+
+      elements.viewerCards.append(backEl);
+
+    }
 
     if (isNewDeal) SFX.deal();
 
@@ -984,6 +1019,13 @@
     else if (type === 'fold') SFX.fold();
 
     else if (type === 'allin') SFX.allin();
+
+    // 炸金花动作
+    else if (type === 'look') SFX.check();
+
+    else if (type === 'compare') SFX.allin();
+
+    else if (type === 'compared') SFX.fold();
 
   }
 
@@ -1357,6 +1399,17 @@
 
     elements.roomName.textContent = room.name;
 
+    // 炸金花与德州共用外框，内部按游戏类型分别渲染
+    if (room.gameType === 'zjh') {
+
+      renderZjhTable(room);
+
+      return;
+
+    }
+
+    elements.zjhInfo.classList.add('hidden');
+
     const startState = getHandStartState(room);
 
     elements.dealerMessage.textContent = room.hand?.dealerMessage || (startState.needsReady
@@ -1389,8 +1442,17 @@
 
     updateStartControlButton(elements.startHandBtn, room);
 
-    // 更新补充筹码、离座、重新入局按钮状态
+    updatePlayerControlButtons(room);
+
+    handleHandEndUi(room);
+
+  }
+
+  // 补充筹码 / 离座 / 重新入局按钮状态（德州与炸金花通用）
+  function updatePlayerControlButtons(room) {
+
     const me = room.players.find((player) => player.isViewer);
+
     const canRebuy = me && !me.isBot && me.seatIndex !== null && room.hand?.status !== 'running';
     elements.rebuyBtn.disabled = !canRebuy;
     elements.rebuyBtn.style.display = (me && me.seatIndex !== null) ? '' : 'none';
@@ -1404,6 +1466,11 @@
     const canResume = me && me.seatIndex !== null && me.sitOut && me.stack > 0 && room.hand?.status !== 'running';
     elements.resumeBtn.disabled = !canResume;
     elements.resumeBtn.style.display = (me && me.seatIndex !== null && me.sitOut) ? '' : 'none';
+
+  }
+
+  // 本局结束弹窗 / 悬浮入口（德州与炸金花通用）
+  function handleHandEndUi(room) {
 
     // Check for hand end and show results modal
     // 摊牌延迟弹窗，让玩家先看清桌面翻牌与赢家高亮；弃牌获胜轻延迟保持节奏
@@ -1478,30 +1545,51 @@
 
   }
 
+  function currentGameType() {
+    const checked = document.querySelector('input[name="gameType"]:checked');
+    return checked?.value === 'zjh' ? 'zjh' : 'texas';
+  }
+
+  function zjhTimeoutMs() {
+    // 秒 → 毫秒，与服务端钳制范围(5s~120s)对齐
+    return Math.min(120, Math.max(5, Math.round(Number(elements.zjhActionTimeout?.value) || 30))) * 1000;
+  }
+
   function createRoom() {
 
+    const gameType = currentGameType();
+    const config = gameType === 'zjh' ? {
+      ante: Number(elements.zjhAnte?.value || 10),
+      baseStake: Number(elements.zjhBaseStake?.value || 10),
+      stakeCap: Math.max(0, Number(elements.zjhStakeCap?.value || 0)),
+      maxRounds: Number(elements.zjhMaxRounds?.value || 15),
+      startingStack: Number(elements.zjhStartingStack?.value || 2000),
+      maxSeats: Number(elements.zjhMaxSeats?.value || 6),
+      actionTimeoutMs: zjhTimeoutMs(),
+    } : {
+      smallBlind: Number(elements.smallBlind.value || 10),
+
+      bigBlind: Number(elements.bigBlind.value || 20),
+
+      startingStack: Number(elements.startingStack.value || 2000),
+
+      maxSeats: Number(elements.maxSeats.value || 9),
+
+      actionTimeoutMs: Math.min(120, Math.max(5, Math.round(Number(elements.actionTimeout.value) || 30))) * 1000,
+
+    };
+
     const payload = {
+
+      gameType,
 
       token: state.token || localStorage.getItem('poker-token') || '',
 
       playerName: elements.playerName.value.trim() || '玩家',
 
-      roomName: `${elements.playerName.value.trim() || '私人'} 的牌桌`,
+      roomName: `${elements.playerName.value.trim() || '私人'} 的${gameType === 'zjh' ? '炸金花桌' : '牌桌'}`,
 
-      config: {
-
-        smallBlind: Number(elements.smallBlind.value || 10),
-
-        bigBlind: Number(elements.bigBlind.value || 20),
-
-        startingStack: Number(elements.startingStack.value || 2000),
-
-        maxSeats: Number(elements.maxSeats.value || 9),
-
-        // 秒 → 毫秒，与服务端钳制范围(5s~120s)对齐
-        actionTimeoutMs: Math.min(120, Math.max(5, Math.round(Number(elements.actionTimeout.value) || 30))) * 1000,
-
-      },
+      config,
 
     };
 
@@ -2048,6 +2136,19 @@
     });
   }
 
+  // 大厅：游戏类型切换时显示对应配置字段
+  function updateGameTypeConfigRows() {
+    const isZjh = currentGameType() === 'zjh';
+    if (elements.texasConfigRow) elements.texasConfigRow.classList.toggle('hidden', isZjh);
+    if (elements.zjhConfigRow) elements.zjhConfigRow.classList.toggle('hidden', !isZjh);
+  }
+
+  document.querySelectorAll('input[name="gameType"]').forEach((radio) => {
+    radio.addEventListener('change', updateGameTypeConfigRows);
+  });
+
+  updateGameTypeConfigRows();
+
   renderLobby();
 
   updateSoundToggleBtn();
@@ -2147,6 +2248,11 @@
   function renderHandEndResults(room) {
     const modalResults = document.getElementById('modalResults');
     modalResults.innerHTML = '';
+
+    if (room.gameType === 'zjh') {
+      renderZjhHandEndResults(room);
+      return;
+    }
 
     const winners = room.hand.winners;
     const totalPot = room.hand.finalPot ?? room.hand.pot;
@@ -2484,15 +2590,22 @@ nextHandBtn.addEventListener('click', () => {
       call: '跟注',
       check: '过牌',
       fold: '弃牌',
+      // 炸金花动作
+      look: '看牌',
+      compare: amount ? `比牌 ${amount}` : '比牌',
+      compared: '被比出局',
     };
     actionEl.textContent = ACTION_TEXT[actionType] || actionType;
-    
+
     const TYPE_CLASS = {
       raise: 'raise',
       call: 'call',
       fold: 'fold',
       check: 'check',
       allin: 'allin',
+      look: 'check',
+      compare: 'raise',
+      compared: 'fold',
     };
     if (TYPE_CLASS[actionType]) {
       actionEl.classList.add(TYPE_CLASS[actionType]);
@@ -2663,6 +2776,430 @@ nextHandBtn.addEventListener('click', () => {
       elements.seatGrid.append(card);
 
     });
+  }
+
+  // ===== 炸金花渲染 =====
+
+  function renderZjhTable(room) {
+    const startState = getHandStartState(room);
+    elements.dealerMessage.textContent = room.hand?.dealerMessage || (startState.needsReady
+      ? `等待准备 ${startState.readyCount}/${startState.readyTotal}`
+      : (startState.canStartDirectly ? '等待开始' : '等待更多玩家'));
+
+    const displayPot = room.hand
+      ? (room.hand.status === 'finished' ? (room.hand.finalPot ?? 0) : (room.hand.pot ?? 0))
+      : 0;
+    elements.pot.textContent = `${displayPot} 筹码`;
+
+    renderZjhInfo(room);
+    elements.board.innerHTML = '';
+    renderZjhSeats(room);
+    renderMembers(room);
+    renderViewerCards(room);
+    renderZjhActions(room);
+    renderLogs(room);
+    updateTurnAlert(room);
+    maybePlayActionSound(room);
+    maybeAnimateChips(room);
+    maybePlayWinSound(room);
+    updateStartControlButton(elements.startHandBtn, room);
+    updatePlayerControlButtons(room);
+    handleHandEndUi(room);
+  }
+
+  function renderZjhInfo(room) {
+    const el = elements.zjhInfo;
+    if (!el) return;
+    if (!room.hand) {
+      el.classList.add('hidden');
+      return;
+    }
+    el.classList.remove('hidden');
+    const hand = room.hand;
+    const capText = room.config.stakeCap > 0 ? `/封顶${room.config.stakeCap}` : '';
+    const liveCount = room.players.filter((player) => player.inHand && !player.folded).length;
+    const roundNow = hand.status === 'running' ? Math.min(hand.round + 1, hand.maxRounds) : hand.round;
+    el.textContent = `底注 ${room.config.ante} · 单注 ${hand.currentStake}${capText} · 第 ${roundNow}/${hand.maxRounds} 轮 · 在场 ${liveCount} 人`;
+  }
+
+  function zjhSeatTags(room, player) {
+    const tags = [];
+    if (player.isHost) tags.push('房主');
+    if (player.isBot) tags.push('🤖 ' + (BOT_LEVEL_LABELS[player.botLevel] || '机器人'));
+    if (!player.connected && !player.isBot) tags.push('离线');
+    if (player.sitOut) tags.push('暂离');
+    if (player.inHand && room.hand?.status === 'running') {
+      if (player.folded) tags.push('已出局');
+      else if (player.allIn) tags.push('全下');
+    }
+    if (room.hand?.status !== 'running' && player.seatIndex !== null && !player.isBot && player.stack > 0 && !player.sitOut) {
+      tags.push(player.ready ? '已准备' : '未准备');
+    }
+    return tags.join(' · ');
+  }
+
+  function renderZjhSeats(room) {
+    elements.seatGrid.innerHTML = '';
+
+    const seats = Array.from({ length: room.config.maxSeats }, (_, index) => ({
+      index,
+      player: room.players.find((player) => player.seatIndex === index) || null,
+    }));
+
+    const positions = layoutSeats(room.config.maxSeats);
+    const compareTargets = state.zjhCompareSelecting
+      ? (room.hand?.availableActions?.targets ?? [])
+      : [];
+    const targetSeats = new Set(compareTargets.map((target) => target.seatIndex));
+
+    seats.forEach((seat) => {
+      const card = document.createElement('div');
+      const [x, y] = positions[seat.index];
+      card.className = 'seat';
+      card.style.left = `${x}%`;
+      card.style.top = `${y}%`;
+
+      if (!seat.player) {
+        card.classList.add('empty');
+        const label = document.createElement('span');
+        label.textContent = `${seat.index + 1} 号位`;
+        const sitBtn = document.createElement('button');
+        sitBtn.type = 'button';
+        sitBtn.textContent = '坐下';
+        sitBtn.addEventListener('click', () => sitAtSeat(seat.index));
+        card.append(label, sitBtn);
+        elements.seatGrid.append(card);
+        return;
+      }
+
+      if (seat.player.isViewer) card.classList.add('viewer');
+      if (
+        room.hand?.status === 'finished'
+        && (room.hand.winners ?? []).some((winner) => winner.name === seat.player.name)
+      ) {
+        card.classList.add('winner');
+      }
+      if (room.hand?.actionSeat === seat.index) card.classList.add('active-turn');
+      if (targetSeats.has(seat.index)) card.classList.add('compare-target');
+
+      const isTop = y < 38;
+      const isBottom = y > 62;
+      card.dataset.position = isTop ? 'top' : (isBottom ? 'bottom' : 'middle');
+
+      if (room.hand && room.hand.dealerSeat === seat.index) {
+        const badge = document.createElement('span');
+        badge.className = 'seat-badge d';
+        badge.textContent = '庄';
+        card.appendChild(badge);
+      }
+
+      const streetActions = room.hand?.playerStreetActions ?? {};
+      const playerStreetAction = streetActions[seat.index];
+      if (playerStreetAction) {
+        card.appendChild(createActionElement(playerStreetAction.type, playerStreetAction.amount));
+      }
+
+      const title = document.createElement('div');
+      title.className = 'seat-name';
+      const playerName = document.createElement('span');
+      playerName.textContent = seat.player.name;
+      const seatNumber = document.createElement('span');
+      seatNumber.textContent = `#${seat.index + 1}`;
+      title.append(playerName, seatNumber);
+
+      const stack = document.createElement('div');
+      stack.className = 'seat-stack';
+      stack.textContent = `${seat.player.stack} 筹码`;
+
+      card.append(title, stack);
+
+      // 看牌状态徽章：闷牌蓝色 / 已看牌金色，替代原座位手牌展示
+      if (room.hand?.status === 'running' && seat.player.inHand && !seat.player.folded) {
+        const seenBadge = document.createElement('div');
+        seenBadge.className = seat.player.seen ? 'zjh-seen-badge seen' : 'zjh-seen-badge blind';
+        seenBadge.textContent = seat.player.seen ? '已看牌' : '闷牌';
+        card.append(seenBadge);
+      }
+
+      if (room.hand?.status === 'running' && seat.player.handContribution > 0) {
+        const bet = document.createElement('div');
+        bet.className = 'seat-bet';
+        bet.textContent = `${seat.player.handContribution}`;
+        card.append(bet);
+      }
+
+      const status = document.createElement('div');
+      status.className = 'seat-status';
+      status.textContent = zjhSeatTags(room, seat.player);
+      card.append(status);
+
+      if (targetSeats.has(seat.index)) {
+        card.addEventListener('click', () => {
+          state.zjhCompareSelecting = false;
+          sendAction({ type: 'compare', targetSeat: seat.index });
+        });
+      }
+
+      if (room.self?.isHost && seat.player.targetToken && !seat.player.isHost && !seat.player.isViewer) {
+        const manageButton = document.createElement('button');
+        manageButton.type = 'button';
+        manageButton.className = 'ghost seat-manage-btn';
+        manageButton.textContent = seat.player.isBot ? '移除 AI' : '踢出';
+        manageButton.disabled = room.summary?.handStatus === 'running';
+        manageButton.addEventListener('click', () => manageMember(seat.player));
+        card.append(manageButton);
+      }
+
+      elements.seatGrid.append(card);
+    });
+  }
+
+  function renderZjhActions(room) {
+    elements.actionPanel.innerHTML = '';
+    state.turnDeadlineAt = room.hand?.status === 'running' ? (room.hand.turnDeadlineAt ?? null) : null;
+    const actions = room.hand?.availableActions;
+
+    if (!actions) {
+      state.zjhCompareSelecting = false;
+      const hint = document.createElement('div');
+      hint.className = 'room-meta';
+      hint.textContent = room.hand
+        ? (room.hand.status === 'finished' ? '本局已结束' : '等待其他玩家行动')
+        : '先加入或创建房间';
+      elements.actionPanel.append(hint);
+      updateTurnCountdown();
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'action-grid zjh-action-grid';
+
+    const makeButton = (label, action, disabled = false, cssClass = '') => {
+      const button = document.createElement('button');
+      button.textContent = label;
+      button.disabled = disabled;
+      if (cssClass) button.className = cssClass;
+      button.addEventListener('click', () => sendAction(action));
+      return button;
+    };
+
+    if (actions.canLook) {
+      grid.append(makeButton('看牌', { type: 'look' }, false, 'btn-check'));
+    }
+    grid.append(makeButton(
+      actions.seen ? `跟注 ${actions.callCost}` : `闷跟 ${actions.callCost}`,
+      { type: 'call' },
+      !actions.canCall,
+      'btn-call',
+    ));
+    grid.append(makeButton('弃牌', { type: 'fold' }, false, 'btn-fold'));
+
+    if (actions.canCompare) {
+      const compareBtn = document.createElement('button');
+      compareBtn.className = state.zjhCompareSelecting ? 'btn-compare selecting' : 'btn-compare';
+      compareBtn.textContent = state.zjhCompareSelecting
+        ? '点击目标座位…'
+        : (actions.targets.length === 1 ? `比牌 ${actions.compareCost}` : `比牌 ${actions.compareCost} (选人)`);
+      compareBtn.addEventListener('click', () => {
+        if (state.zjhCompareSelecting) {
+          state.zjhCompareSelecting = false;
+          renderZjhActions(state.room);
+          renderZjhSeats(state.room);
+          return;
+        }
+        if (actions.targets.length === 1) {
+          sendAction({ type: 'compare', targetSeat: actions.targets[0].seatIndex });
+          return;
+        }
+        state.zjhCompareSelecting = true;
+        showToast('请点击要比牌的玩家座位');
+        renderZjhActions(state.room);
+        renderZjhSeats(state.room);
+      });
+      grid.append(compareBtn);
+    }
+
+    elements.actionPanel.append(buildTurnCountdown(), grid);
+
+    // 加注行：抬高单注（闷牌按 1x 单注支付，看牌按 2x）
+    if (actions.canRaise) {
+      const clampStake = (value) => {
+        const num = Math.round(Number(value));
+        if (!Number.isFinite(num)) return actions.minStake;
+        return Math.max(actions.minStake, Math.min(num, actions.maxStake));
+      };
+      let stakeValue = actions.minStake;
+
+      const raiseRow = document.createElement('div');
+      raiseRow.className = 'raise-row zjh-raise-row';
+
+      const stepDownBtn = document.createElement('button');
+      stepDownBtn.type = 'button';
+      stepDownBtn.className = 'raise-step';
+      stepDownBtn.textContent = '−';
+      stepDownBtn.addEventListener('click', () => setStake(stakeValue - actions.raiseStep));
+
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.min = actions.minStake;
+      input.max = actions.maxStake;
+      input.step = 1;
+      input.value = stakeValue;
+      input.id = 'zjhStakeInput';
+
+      const stepUpBtn = document.createElement('button');
+      stepUpBtn.type = 'button';
+      stepUpBtn.className = 'raise-step';
+      stepUpBtn.textContent = '+';
+      stepUpBtn.addEventListener('click', () => setStake(stakeValue + actions.raiseStep));
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.className = 'raise-slider';
+      slider.min = actions.minStake;
+      slider.max = actions.maxStake;
+      slider.step = actions.raiseStep;
+      slider.value = stakeValue;
+
+      const costPreview = document.createElement('span');
+      costPreview.className = 'zjh-cost-preview';
+
+      const updateCostPreview = () => {
+        costPreview.textContent = actions.seen
+          ? `看牌投入 ${stakeValue * 2}`
+          : `闷牌投入 ${stakeValue}`;
+      };
+
+      const setStake = (value) => {
+        stakeValue = clampStake(value);
+        input.value = stakeValue;
+        slider.value = stakeValue;
+        updateCostPreview();
+      };
+
+      input.addEventListener('input', () => {
+        const num = Number(input.value);
+        if (input.value !== '' && Number.isFinite(num)) stakeValue = num;
+        const clamped = clampStake(num);
+        if (clamped >= Number(slider.min) && clamped <= Number(slider.max)) slider.value = clamped;
+        updateCostPreview();
+      });
+      input.addEventListener('blur', () => setStake(input.value));
+      slider.addEventListener('input', () => {
+        stakeValue = clampStake(slider.value);
+        input.value = stakeValue;
+        updateCostPreview();
+      });
+
+      const raiseBtn = document.createElement('button');
+      raiseBtn.textContent = actions.seen ? '加注' : '闷加';
+      raiseBtn.className = 'btn-raise';
+      raiseBtn.addEventListener('click', () => {
+        sendAction({ type: 'raise', amount: clampStake(stakeValue) });
+      });
+
+      updateCostPreview();
+      raiseRow.append(stepDownBtn, input, stepUpBtn, raiseBtn, costPreview);
+      elements.actionPanel.append(slider, raiseRow);
+    }
+
+    updateTurnCountdown();
+  }
+
+  function renderZjhHandEndResults(room) {
+    const modalResults = document.getElementById('modalResults');
+    const winners = room.hand.winners || [];
+    const totalPot = room.hand.finalPot ?? room.hand.pot ?? 0;
+
+    if (winners.length === 0) {
+      const noWinner = document.createElement('div');
+      noWinner.className = 'modal-body';
+      noWinner.textContent = '本局无人获胜';
+      modalResults.appendChild(noWinner);
+    } else {
+      winners.forEach((winner) => {
+        const resultDiv = document.createElement('div');
+        resultDiv.className = 'player-result';
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'player-result-name';
+        nameDiv.textContent = winner.name;
+
+        const cardsDiv = document.createElement('div');
+        cardsDiv.className = 'player-result-cards';
+        if (Array.isArray(winner.holeCards) && winner.holeCards.length > 0 && winner.holeCards[0] !== '??') {
+          winner.holeCards.forEach((cardCode) => cardsDiv.appendChild(renderCard(cardCode)));
+        }
+
+        const handLabelDiv = document.createElement('div');
+        handLabelDiv.className = 'player-result-hand';
+        handLabelDiv.textContent = winner.handLabel || '';
+
+        const amountDiv = document.createElement('div');
+        amountDiv.className = 'player-result-amount player-result-win';
+        amountDiv.textContent = `+${winner.amount} 筹码`;
+
+        resultDiv.appendChild(nameDiv);
+        if (cardsDiv.childElementCount > 0) resultDiv.appendChild(cardsDiv);
+        if (winner.handLabel) resultDiv.appendChild(handLabelDiv);
+        resultDiv.appendChild(amountDiv);
+
+        modalResults.appendChild(resultDiv);
+      });
+    }
+
+    // 强制/常规摊牌局：列出其余未弃牌玩家的手牌（输家置灰）
+    if (room.hand.revealed) {
+      const winnerNames = new Set(winners.map((winner) => winner.name));
+      const showdownLosers = room.players.filter((player) => (
+        player.inHand
+        && !player.folded
+        && !winnerNames.has(player.name)
+        && Array.isArray(player.holeCards)
+        && player.holeCards.length === 3
+        && player.holeCards[0] !== '??'
+      ));
+      if (showdownLosers.length > 0) {
+        const showdownBlock = document.createElement('div');
+        showdownBlock.className = 'showdown-block';
+
+        const heading = document.createElement('div');
+        heading.className = 'showdown-heading';
+        heading.textContent = '本局摊牌';
+        showdownBlock.appendChild(heading);
+
+        for (const player of showdownLosers) {
+          const resultDiv = document.createElement('div');
+          resultDiv.className = 'player-result player-result-loser';
+
+          const nameDiv = document.createElement('div');
+          nameDiv.className = 'player-result-name';
+          nameDiv.textContent = player.name;
+
+          const cardsDiv = document.createElement('div');
+          cardsDiv.className = 'player-result-cards';
+          player.holeCards.forEach((cardCode) => cardsDiv.appendChild(renderCard(cardCode)));
+
+          resultDiv.appendChild(nameDiv);
+          resultDiv.appendChild(cardsDiv);
+          if (player.handLabel) {
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'player-result-hand';
+            labelDiv.textContent = player.handLabel;
+            resultDiv.appendChild(labelDiv);
+          }
+          showdownBlock.appendChild(resultDiv);
+        }
+
+        modalResults.appendChild(showdownBlock);
+      }
+    }
+
+    const potSummary = document.createElement('div');
+    potSummary.className = 'pot-summary';
+    potSummary.innerHTML = `💰 底池总额: <strong>${totalPot} 筹码</strong>`;
+
+    modalResults.appendChild(potSummary);
   }
 
 

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>德州扑克</title>
+    <title>德州扑克 & 炸金花</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/styles.css">
   </head>
@@ -11,7 +11,7 @@
     <div id="app">
       <header class="topbar">
         <div class="topbar-left">
-          <h1>德州扑克</h1>
+          <h1>德州扑克 &amp; 炸金花</h1>
           <span id="connectionStatus" class="conn-badge">连接中...</span>
         </div>
         <button id="leaveTableBtn" class="ghost hidden" type="button">返回大厅</button>
@@ -85,7 +85,17 @@
                 <input id="roomCode" maxlength="6" placeholder="ABC123">
               </label>
             </div>
-            <div class="field-row config-row">
+            <div class="game-type-row" id="gameTypeRow">
+              <label class="game-type-option">
+                <input type="radio" name="gameType" value="texas" checked>
+                <span>♠ 德州扑克</span>
+              </label>
+              <label class="game-type-option">
+                <input type="radio" name="gameType" value="zjh">
+                <span>♧ 炸金花</span>
+              </label>
+            </div>
+            <div class="field-row config-row" id="texasConfigRow">
               <label>
                 小盲
                 <input id="smallBlind" type="number" min="1" value="10">
@@ -105,6 +115,36 @@
               <label>
                 行动时限(秒)
                 <input id="actionTimeout" type="number" min="5" max="120" step="1" value="30">
+              </label>
+            </div>
+            <div class="field-row config-row hidden" id="zjhConfigRow">
+              <label>
+                底注
+                <input id="zjhAnte" type="number" min="1" value="10">
+              </label>
+              <label>
+                初始单注
+                <input id="zjhBaseStake" type="number" min="1" value="10">
+              </label>
+              <label>
+                单注封顶(0不限)
+                <input id="zjhStakeCap" type="number" min="0" value="0">
+              </label>
+              <label>
+                轮数上限
+                <input id="zjhMaxRounds" type="number" min="3" max="60" value="15">
+              </label>
+              <label>
+                起始筹码
+                <input id="zjhStartingStack" type="number" min="100" value="2000">
+              </label>
+              <label>
+                座位
+                <input id="zjhMaxSeats" type="number" min="2" max="9" value="6">
+              </label>
+              <label>
+                行动时限(秒)
+                <input id="zjhActionTimeout" type="number" min="5" max="120" step="1" value="30">
               </label>
             </div>
             <div class="button-row">
@@ -163,6 +203,7 @@
             <div id="seatGrid" class="seat-grid"></div>
             <div class="felt">
               <div id="dealerMessage" class="dealer-message"></div>
+              <div id="zjhInfo" class="zjh-info hidden"></div>
               <div id="board" class="board"></div>
               <div id="pot" class="pot"></div>
             </div>

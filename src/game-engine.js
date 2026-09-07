@@ -180,7 +180,11 @@ export function hydrateRoom(snapshot) {
 }
 
 function stripRuntime(room) {
+  // 与炸金花引擎一致：剔除运行时字段与 __ 前缀的内部引用
   const { socketMap, ...snapshot } = room;
+  for (const key of Object.keys(snapshot)) {
+    if (key.startsWith('__')) delete snapshot[key];
+  }
   return snapshot;
 }
 
@@ -777,6 +781,7 @@ function playerView(room, viewerToken, player) {
 
 export function roomSummary(room) {
   return {
+    gameType: 'texas',
     code: room.code,
     name: room.name,
     createdAt: room.createdAt,
@@ -798,6 +803,7 @@ export function serializeRoom(room, viewerToken = null) {
   const selfPlayer = viewerToken ? room.players.find(player => player.token === viewerToken) : null;
   
   return {
+    gameType: 'texas',
     summary: roomSummary(room),
     code: room.code,
     name: room.name,
@@ -866,15 +872,18 @@ export function serializeRoom(room, viewerToken = null) {
 }
 
 export class GameManager {
-  constructor(store, { onUpdate, onHandStart, onClose, config } = {}) {
+  constructor(store, { onUpdate, onHandStart, onClose, config, occupiedCodes } = {}) {
     this.store = store;
     this.onUpdate = onUpdate ?? (() => {});
     this.onHandStart = onHandStart ?? (() => {});
     this.onClose = onClose ?? (() => {});
     this.config = config || DEFAULT_CONFIG;
+    this.occupiedCodes = occupiedCodes ?? (() => new Set());
     this.rooms = new Map();
 
     for (const snapshot of this.store.listRooms()) {
+      // 炸金花房间由 ZjhManager 负责恢复
+      if (snapshot.gameType === 'zjh') continue;
       try {
         const room = hydrateRoom(snapshot);
         this.rooms.set(room.code, room);
@@ -910,8 +919,9 @@ export class GameManager {
 
   createRoom({ token, roomName, playerName, config = {} }) {
     const roomConfig = normalizeConfig(config);
+    const taken = new Set([...this.rooms.keys(), ...this.occupiedCodes()]);
     const room = {
-      code: makeRoomCode(this.rooms),
+      code: makeRoomCode(taken),
       name: roomName?.trim() || '私人牌桌',
       createdAt: now(),
       updatedAt: now(),

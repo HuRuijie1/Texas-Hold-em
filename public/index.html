@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>德州扑克 & 炸金花</title>
+    <title>德州扑克 & 炸金花 & 干瞪眼</title>
     <link rel="icon" href="data:,">
     <link rel="stylesheet" href="/styles.css">
   </head>
@@ -11,7 +11,7 @@
     <div id="app">
       <header class="topbar">
         <div class="topbar-left">
-          <h1>德州扑克 &amp; 炸金花</h1>
+          <h1>德州扑克 &amp; 炸金花 &amp; 干瞪眼</h1>
           <span id="connectionStatus" class="conn-badge">连接中...</span>
         </div>
         <button id="leaveTableBtn" class="ghost hidden" type="button">返回大厅</button>
@@ -94,6 +94,10 @@
                 <input type="radio" name="gameType" value="zjh">
                 <span>♧ 炸金花</span>
               </label>
+              <label class="game-type-option">
+                <input type="radio" name="gameType" value="gdy">
+                <span>♦ 干瞪眼</span>
+              </label>
             </div>
             <div class="field-row config-row" id="texasConfigRow">
               <label>
@@ -145,6 +149,28 @@
               <label>
                 行动时限(秒)
                 <input id="zjhActionTimeout" type="number" min="5" max="120" step="1" value="30">
+              </label>
+            </div>
+            <div class="field-row config-row hidden" id="gdyConfigRow">
+              <label>
+                底分
+                <input id="gdyBaseScore" type="number" min="1" value="1">
+              </label>
+              <label>
+                单局封顶(0不限)
+                <input id="gdyScoreCap" type="number" min="0" value="100">
+              </label>
+              <label>
+                起始筹码
+                <input id="gdyStartingStack" type="number" min="50" value="200">
+              </label>
+              <label>
+                座位(2-5)
+                <input id="gdyMaxSeats" type="number" min="2" max="5" value="5">
+              </label>
+              <label>
+                行动时限(秒)
+                <input id="gdyActionTimeout" type="number" min="5" max="120" step="1" value="30">
               </label>
             </div>
             <div class="button-row">
@@ -204,6 +230,7 @@
             <div class="felt">
               <div id="dealerMessage" class="dealer-message"></div>
               <div id="zjhInfo" class="zjh-info hidden"></div>
+              <div id="gdyInfo" class="zjh-info hidden"></div>
               <div id="board" class="board"></div>
               <div id="pot" class="pot"></div>
             </div>

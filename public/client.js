@@ -62,6 +62,11 @@
 
     zjhCompareSelecting: false,
 
+    // 干瞪眼：当前选中的手牌（手牌数组下标）与所属局 id
+    gdySelected: [],
+
+    gdyHandId: null,
+
   };
 
   const BOT_LEVEL_LABELS = {
@@ -387,6 +392,13 @@
     zjhStartingStack: $('zjhStartingStack'),
     zjhMaxSeats: $('zjhMaxSeats'),
     zjhActionTimeout: $('zjhActionTimeout'),
+    gdyInfo: $('gdyInfo'),
+    gdyConfigRow: $('gdyConfigRow'),
+    gdyBaseScore: $('gdyBaseScore'),
+    gdyScoreCap: $('gdyScoreCap'),
+    gdyStartingStack: $('gdyStartingStack'),
+    gdyMaxSeats: $('gdyMaxSeats'),
+    gdyActionTimeout: $('gdyActionTimeout'),
 
   };
 
@@ -518,6 +530,8 @@
 
   const SUIT_SYMBOL_MAP = { S: '\u2660', H: '\u2665', D: '\u2666', C: '\u2663' };
   const RANK_DISPLAY = { T: '10' };
+  // 干瞪眼癞子（大小王）
+  const JOKER_DISPLAY = { RJ: { label: '王', sub: 'JOKER', color: 'red' }, BJ: { label: '王', sub: 'joker', color: 'black' } };
 
   function renderCard(card, back) {
 
@@ -529,6 +543,35 @@
 
       return div;
 
+    }
+
+    // 癞子牌面：大王红色 / 小王黑色，中间显示 ★
+    const joker = JOKER_DISPLAY[card];
+    if (joker) {
+      div.className = 'card joker ' + joker.color;
+      const cornerTL = document.createElement('div');
+      cornerTL.className = 'corner top-left';
+      const rankTL = document.createElement('span');
+      rankTL.className = 'rank';
+      rankTL.textContent = joker.label;
+      const suitTL = document.createElement('span');
+      suitTL.className = 'suit-symbol';
+      suitTL.textContent = joker.sub;
+      cornerTL.append(rankTL, suitTL);
+      const centerSuit = document.createElement('div');
+      centerSuit.className = 'center-suit joker-star';
+      centerSuit.textContent = '★';
+      const cornerBR = document.createElement('div');
+      cornerBR.className = 'corner bottom-right';
+      const rankBR = document.createElement('span');
+      rankBR.className = 'rank';
+      rankBR.textContent = joker.label;
+      const suitBR = document.createElement('span');
+      suitBR.className = 'suit-symbol';
+      suitBR.textContent = joker.sub;
+      cornerBR.append(rankBR, suitBR);
+      div.append(cornerTL, centerSuit, cornerBR);
+      return div;
     }
 
     const rank = card[0];
@@ -695,6 +738,8 @@
 
     setTableMode(false);
 
+    document.body.classList.remove('is-gdy-view');
+
     elements.lobbyView.classList.remove('hidden');
 
     elements.tableView.classList.add('hidden');
@@ -720,8 +765,8 @@
       const nameRow = document.createElement('div');
 
       const badge = document.createElement('span');
-      badge.className = room.gameType === 'zjh' ? 'room-game-badge zjh' : 'room-game-badge';
-      badge.textContent = room.gameType === 'zjh' ? '炸金花' : '德州';
+      badge.className = `room-game-badge ${room.gameType}`;
+      badge.textContent = room.gameType === 'zjh' ? '炸金花' : room.gameType === 'gdy' ? '干瞪眼' : '德州';
 
       const name = document.createElement('strong');
 
@@ -1026,6 +1071,11 @@
     else if (type === 'compare') SFX.allin();
 
     else if (type === 'compared') SFX.fold();
+
+    // 干瞪眼动作
+    else if (type === 'play') SFX.raise();
+
+    else if (type === 'pass') SFX.fold();
 
   }
 
@@ -1366,6 +1416,9 @@
 
     setTableMode(true);
 
+    // 干瞪眼视图标记：底部栏改为"手牌整行 + 操作换行"布局
+    document.body.classList.toggle('is-gdy-view', room.gameType === 'gdy');
+
     state.room = room;
 
     state.actionTimeoutMs = room.config?.actionTimeoutMs ?? 30000;
@@ -1399,7 +1452,7 @@
 
     elements.roomName.textContent = room.name;
 
-    // 炸金花与德州共用外框，内部按游戏类型分别渲染
+    // 炸金花/干瞪眼与德州共用外框，内部按游戏类型分别渲染
     if (room.gameType === 'zjh') {
 
       renderZjhTable(room);
@@ -1408,7 +1461,17 @@
 
     }
 
+    if (room.gameType === 'gdy') {
+
+      renderGdyTable(room);
+
+      return;
+
+    }
+
     elements.zjhInfo.classList.add('hidden');
+
+    elements.gdyInfo.classList.add('hidden');
 
     const startState = getHandStartState(room);
 
@@ -1547,17 +1610,18 @@
 
   function currentGameType() {
     const checked = document.querySelector('input[name="gameType"]:checked');
-    return checked?.value === 'zjh' ? 'zjh' : 'texas';
+    const value = checked?.value;
+    return value === 'zjh' || value === 'gdy' ? value : 'texas';
   }
 
-  function zjhTimeoutMs() {
-    // 秒 → 毫秒，与服务端钳制范围(5s~120s)对齐
-    return Math.min(120, Math.max(5, Math.round(Number(elements.zjhActionTimeout?.value) || 30))) * 1000;
+  function gdyTimeoutMs() {
+    return Math.min(120, Math.max(5, Math.round(Number(elements.gdyActionTimeout?.value) || 30))) * 1000;
   }
 
   function createRoom() {
 
     const gameType = currentGameType();
+    const gameLabel = gameType === 'zjh' ? '炸金花桌' : gameType === 'gdy' ? '干瞪眼桌' : '牌桌';
     const config = gameType === 'zjh' ? {
       ante: Number(elements.zjhAnte?.value || 10),
       baseStake: Number(elements.zjhBaseStake?.value || 10),
@@ -1566,6 +1630,12 @@
       startingStack: Number(elements.zjhStartingStack?.value || 2000),
       maxSeats: Number(elements.zjhMaxSeats?.value || 6),
       actionTimeoutMs: zjhTimeoutMs(),
+    } : gameType === 'gdy' ? {
+      baseScore: Math.max(1, Number(elements.gdyBaseScore?.value || 1)),
+      scoreCap: Math.max(0, Number(elements.gdyScoreCap?.value || 100)),
+      startingStack: Number(elements.gdyStartingStack?.value || 200),
+      maxSeats: Math.min(5, Math.max(2, Number(elements.gdyMaxSeats?.value || 5))),
+      actionTimeoutMs: gdyTimeoutMs(),
     } : {
       smallBlind: Number(elements.smallBlind.value || 10),
 
@@ -1587,7 +1657,7 @@
 
       playerName: elements.playerName.value.trim() || '玩家',
 
-      roomName: `${elements.playerName.value.trim() || '私人'} 的${gameType === 'zjh' ? '炸金花桌' : '牌桌'}`,
+      roomName: `${elements.playerName.value.trim() || '私人'} 的${gameLabel}`,
 
       config,
 
@@ -2145,9 +2215,10 @@
 
   // 大厅：游戏类型切换时显示对应配置字段
   function updateGameTypeConfigRows() {
-    const isZjh = currentGameType() === 'zjh';
-    if (elements.texasConfigRow) elements.texasConfigRow.classList.toggle('hidden', isZjh);
-    if (elements.zjhConfigRow) elements.zjhConfigRow.classList.toggle('hidden', !isZjh);
+    const gameType = currentGameType();
+    if (elements.texasConfigRow) elements.texasConfigRow.classList.toggle('hidden', gameType !== 'texas');
+    if (elements.zjhConfigRow) elements.zjhConfigRow.classList.toggle('hidden', gameType !== 'zjh');
+    if (elements.gdyConfigRow) elements.gdyConfigRow.classList.toggle('hidden', gameType !== 'gdy');
   }
 
   document.querySelectorAll('input[name="gameType"]').forEach((radio) => {
@@ -2255,6 +2326,11 @@
   function renderHandEndResults(room) {
     const modalResults = document.getElementById('modalResults');
     modalResults.innerHTML = '';
+
+    if (room.gameType === 'gdy') {
+      renderGdyHandEndResults(room);
+      return;
+    }
 
     if (room.gameType === 'zjh') {
       renderZjhHandEndResults(room);
@@ -2587,10 +2663,10 @@ nextHandBtn.addEventListener('click', () => {
     return streetActions;
   }
 
-  function createActionElement(actionType, amount) {
+  function createActionElement(actionType, amount, label = null) {
     const actionEl = document.createElement('div');
     actionEl.className = 'player-action';
-    
+
     const ACTION_TEXT = {
       raise: amount ? `加注 ${amount}` : '加注',
       allin: amount ? `全下 ${amount}` : '全下',
@@ -2601,8 +2677,11 @@ nextHandBtn.addEventListener('click', () => {
       look: '看牌',
       compare: amount ? `比牌 ${amount}` : '比牌',
       compared: '被比出局',
+      // 干瞪眼动作
+      play: label || '出牌',
+      pass: '干瞪眼',
     };
-    actionEl.textContent = ACTION_TEXT[actionType] || actionType;
+    actionEl.textContent = label ?? (ACTION_TEXT[actionType] || actionType);
 
     const TYPE_CLASS = {
       raise: 'raise',
@@ -2613,6 +2692,8 @@ nextHandBtn.addEventListener('click', () => {
       look: 'check',
       compare: 'raise',
       compared: 'fold',
+      play: 'raise',
+      pass: 'fold',
     };
     if (TYPE_CLASS[actionType]) {
       actionEl.classList.add(TYPE_CLASS[actionType]);
@@ -3239,5 +3320,365 @@ nextHandBtn.addEventListener('click', () => {
     modalResults.appendChild(potSummary);
   }
 
+
+  // ===== 干瞪眼渲染 =====
+
+  function gdySeatTags(room, player) {
+    const tags = [];
+    if (player.isHost) tags.push('房主');
+    if (!player.connected) tags.push('离线');
+    if (player.sitOut) tags.push('暂离');
+    if (room.hand?.status !== 'running' && player.seatIndex !== null && player.stack > 0 && !player.sitOut) {
+      tags.push(player.ready ? '已准备' : '未准备');
+    }
+    return tags.join(' · ');
+  }
+
+  function renderGdyInfo(room) {
+    const el = elements.gdyInfo;
+    if (!el) return;
+    const hand = room.hand;
+    if (!hand) {
+      el.classList.add('hidden');
+      return;
+    }
+    el.classList.remove('hidden');
+    const drawText = hand.status === 'running' ? ` · 牌堆 ${hand.drawPileLeft} 张` : '';
+    const bombText = hand.bombsPlayed > 0 ? ` · 炸弹×${hand.bombsPlayed}（倍率×${hand.multiplier}）` : '';
+    el.textContent = `底分 ${room.config.baseScore}${drawText}${bombText}${room.config.scoreCap > 0 ? ` · 封顶${room.config.scoreCap}` : ''}`;
+  }
+
+  function toggleGdyCard(index) {
+    const position = state.gdySelected.indexOf(index);
+    if (position >= 0) state.gdySelected.splice(position, 1);
+    else state.gdySelected.push(index);
+    if (state.room) renderGdyHand(state.room);
+  }
+
+  // 自己的手牌：常亮可点选（干瞪眼无闷牌阶段）
+  function renderGdyHand(room) {
+    const me = room.players.find((player) => player.isViewer);
+    const cards = me?.holeCards || [];
+    if (room.hand?.id !== state.gdyHandId) {
+      state.gdyHandId = room.hand?.id ?? null;
+      state.gdySelected = [];
+    }
+    state.gdySelected = state.gdySelected.filter((index) => index < cards.length);
+    const prevScrollTop = elements.viewerCards.scrollTop;
+    elements.viewerCards.innerHTML = '';
+    elements.peekCardsBtn.classList.add('hidden');
+    if (!cards.length) {
+      elements.viewerCards.textContent = me && me.seatIndex !== null ? '等待发牌' : '未坐下';
+      return;
+    }
+    cards.forEach((card, index) => {
+      const cardEl = renderCard(card);
+      cardEl.classList.add('gdy-hand-card');
+      cardEl.classList.toggle('selected', state.gdySelected.includes(index));
+      cardEl.addEventListener('click', () => toggleGdyCard(index));
+      elements.viewerCards.append(cardEl);
+    });
+    // 选牌重渲染后保持滚动位置，避免手牌多时跳回顶部
+    elements.viewerCards.scrollTop = prevScrollTop;
+  }
+
+  // 上家出的牌显示到牌桌中央，方便观察和接牌
+  function renderGdyBoard(room) {
+    elements.board.innerHTML = '';
+    const lastPlay = room.hand?.lastPlay;
+    if (!lastPlay) {
+      if (room.hand?.status === 'running') {
+        const empty = document.createElement('div');
+        empty.className = 'dealer-message';
+        empty.textContent = '等待出牌';
+        elements.board.append(empty);
+      }
+      return;
+    }
+    // 中央已有出牌展示，清掉 dealerMessage 避免两段文字重叠
+    elements.dealerMessage.textContent = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'gdy-last-play';
+    const label = document.createElement('div');
+    label.className = 'gdy-last-label';
+    label.textContent = `${lastPlay.name} · ${lastPlay.label}`;
+    const cardsEl = document.createElement('div');
+    cardsEl.className = 'gdy-last-cards';
+    lastPlay.cards.forEach((cardCode) => cardsEl.appendChild(renderCard(cardCode)));
+    wrap.append(label, cardsEl);
+    elements.board.append(wrap);
+  }
+
+  function renderGdySeats(room) {
+    elements.seatGrid.innerHTML = '';
+
+    const seats = Array.from({ length: room.config.maxSeats }, (_, index) => ({
+      index,
+      player: room.players.find((player) => player.seatIndex === index) || null,
+    }));
+
+    const positions = layoutSeats(room.config.maxSeats);
+    seats.forEach((seat) => {
+      const card = document.createElement('div');
+      const [x, y] = positions[seat.index];
+      card.className = 'seat';
+      card.style.left = `${x}%`;
+      card.style.top = `${y}%`;
+
+      if (!seat.player) {
+        card.classList.add('empty');
+        const label = document.createElement('span');
+        label.textContent = `${seat.index + 1} 号位`;
+        const sitBtn = document.createElement('button');
+        sitBtn.type = 'button';
+        sitBtn.textContent = '坐下';
+        sitBtn.addEventListener('click', () => sitAtSeat(seat.index));
+        card.append(label, sitBtn);
+        elements.seatGrid.append(card);
+        return;
+      }
+
+      if (seat.player.isViewer) card.classList.add('viewer');
+      if (
+        room.hand?.status === 'finished'
+        && (room.hand.winners ?? []).some((winner) => winner.name === seat.player.name)
+      ) {
+        card.classList.add('winner');
+      }
+      if (room.hand?.turnSeat === seat.index && room.hand?.status === 'running') {
+        card.classList.add('active-turn');
+      }
+
+      if (room.hand && room.hand.dealerSeat === seat.index) {
+        const badge = document.createElement('span');
+        badge.className = 'seat-badge d';
+        badge.textContent = '庄';
+        card.appendChild(badge);
+      }
+
+      const streetActions = room.hand?.playerStreetActions ?? {};
+      const playerStreetAction = streetActions[seat.index];
+      if (playerStreetAction && room.hand?.status === 'running') {
+        card.appendChild(createActionElement(playerStreetAction.type, playerStreetAction.amount, playerStreetAction.label ?? null));
+        card.classList.add('has-action');
+      }
+
+      const title = document.createElement('div');
+      title.className = 'seat-name';
+      const playerName = document.createElement('span');
+      playerName.textContent = seat.player.name;
+      const seatNumber = document.createElement('span');
+      seatNumber.textContent = `#${seat.index + 1}`;
+      title.append(playerName, seatNumber);
+
+      const stack = document.createElement('div');
+      stack.className = 'seat-stack';
+      stack.textContent = `${seat.player.stack} 筹码`;
+
+      card.append(title, stack);
+
+      // 剩牌数（自己之外的玩家只显示张数，结束后亮牌）
+      const cardsEl = document.createElement('div');
+      cardsEl.className = 'gdy-card-count';
+      cardsEl.textContent = `🂠 ${seat.player.cardCount} 张`;
+      card.append(cardsEl);
+
+      // 结束后：座位上亮出各玩家剩牌
+      if (room.hand?.status === 'finished' && Array.isArray(seat.player.holeCards) && seat.player.holeCards.length > 0) {
+        const seatCards = document.createElement('div');
+        seatCards.className = 'seat-cards';
+        seat.player.holeCards.forEach((cardCode) => seatCards.appendChild(renderCard(cardCode)));
+        card.appendChild(seatCards);
+      }
+
+      const status = document.createElement('div');
+      status.className = 'seat-status';
+      status.textContent = gdySeatTags(room, seat.player);
+      card.append(status);
+
+      if (room.self?.isHost && seat.player.targetToken && !seat.player.isHost && !seat.player.isViewer) {
+        const manageButton = document.createElement('button');
+        manageButton.type = 'button';
+        manageButton.className = 'ghost seat-manage-btn';
+        manageButton.textContent = '踢出';
+        manageButton.disabled = room.summary?.handStatus === 'running';
+        manageButton.addEventListener('click', () => manageMember(seat.player));
+        card.append(manageButton);
+      }
+
+      elements.seatGrid.append(card);
+      placeActionBubble(card);
+    });
+  }
+
+  function renderGdyActions(room) {
+    elements.actionPanel.innerHTML = '';
+    state.turnDeadlineAt = room.hand?.status === 'running' ? (room.hand.turnDeadlineAt ?? null) : null;
+    const actions = room.hand?.availableActions;
+
+    if (!actions) {
+      const hint = document.createElement('div');
+      hint.className = 'room-meta';
+      hint.textContent = room.hand
+        ? (room.hand.status === 'finished' ? '本局已结束' : '等待其他玩家行动')
+        : '先加入或创建房间';
+      elements.actionPanel.append(hint);
+      updateTurnCountdown();
+      return;
+    }
+
+    const lastPlay = actions.lastPlay;
+    const grid = document.createElement('div');
+    grid.className = 'action-grid gdy-action-grid';
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'btn-raise';
+    playBtn.textContent = '出牌';
+    playBtn.addEventListener('click', () => {
+      if (!state.room) return;
+      const me = state.room.players.find((player) => player.isViewer);
+      const cards = state.gdySelected.map((index) => me?.holeCards?.[index]).filter(Boolean);
+      if (!cards.length) {
+        showToast('请先点选手牌', true);
+        return;
+      }
+      state.gdySelected = [];
+      sendAction({ type: 'play', cards });
+    });
+    grid.append(playBtn);
+
+    const clearBtn = document.createElement('button');
+    clearBtn.className = 'btn-check';
+    clearBtn.textContent = '重选';
+    clearBtn.addEventListener('click', () => {
+      state.gdySelected = [];
+      renderGdyHand(state.room);
+    });
+    grid.append(clearBtn);
+
+    if (actions.canPass) {
+      const passBtn = document.createElement('button');
+      passBtn.className = 'btn-fold';
+      passBtn.textContent = '过';
+      passBtn.addEventListener('click', () => {
+        state.gdySelected = [];
+        sendAction({ type: 'pass' });
+      });
+      grid.append(passBtn);
+    }
+
+    elements.actionPanel.append(buildTurnCountdown(), grid);
+
+    const hint = document.createElement('div');
+    hint.className = 'room-meta';
+    if (lastPlay) {
+      hint.textContent = `${lastPlay.name} 出了 ${lastPlay.label}：只能用紧邻大一号的同型牌接（2 通吃单张/对子），或用炸弹`;
+    } else {
+      hint.textContent = '轮到你自由出牌（不能过）：点选手牌后点「出牌」；双王需带一张普通牌作炸弹';
+    }
+    elements.actionPanel.append(hint);
+
+    updateTurnCountdown();
+  }
+
+  function renderGdyTable(room) {
+    const startState = getHandStartState(room);
+    elements.dealerMessage.textContent = room.hand?.dealerMessage || (startState.needsReady
+      ? `等待准备 ${startState.readyCount}/${startState.readyTotal}`
+      : (startState.canStartDirectly ? '等待开始' : '等待更多玩家'));
+
+    elements.pot.textContent = room.hand?.status === 'running'
+      ? `炸弹倍率 ×${room.hand.multiplier}`
+      : (room.hand?.status === 'finished' ? '本局已结束' : '等待开局');
+
+    renderGdyInfo(room);
+    renderGdyBoard(room);
+    renderGdySeats(room);
+    renderMembers(room);
+    renderGdyHand(room);
+    renderGdyActions(room);
+    renderLogs(room);
+    updateTurnAlert(room);
+    maybePlayActionSound(room);
+    maybePlayWinSound(room);
+    updateStartControlButton(elements.startHandBtn, room);
+    updatePlayerControlButtons(room);
+    handleHandEndUi(room);
+  }
+
+  function renderGdyHandEndResults(room) {
+    const modalResults = document.getElementById('modalResults');
+    const winners = room.hand.winners || [];
+    const results = room.hand.results || [];
+
+    if (winners.length === 0) {
+      const noWinner = document.createElement('div');
+      noWinner.className = 'modal-body';
+      noWinner.textContent = '本局无人获胜';
+      modalResults.appendChild(noWinner);
+    } else {
+      winners.forEach((winner) => {
+        const resultDiv = document.createElement('div');
+        resultDiv.className = 'player-result';
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'player-result-name';
+        nameDiv.textContent = `${winner.name} 🏆`;
+
+        const handLabelDiv = document.createElement('div');
+        handLabelDiv.className = 'player-result-hand';
+        handLabelDiv.textContent = winner.handLabel || '';
+
+        const amountDiv = document.createElement('div');
+        amountDiv.className = 'player-result-amount player-result-win';
+        amountDiv.textContent = `+${winner.amount} 筹码`;
+
+        resultDiv.appendChild(nameDiv);
+        if (winner.handLabel) resultDiv.appendChild(handLabelDiv);
+        resultDiv.appendChild(amountDiv);
+        modalResults.appendChild(resultDiv);
+      });
+    }
+
+    // 输家结算明细：剩牌数 × 底分 × 炸弹倍率（被通关者个人再 ×2）＝扣分
+    if (results.length > 0) {
+      const block = document.createElement('div');
+      block.className = 'showdown-block';
+
+      const heading = document.createElement('div');
+      heading.className = 'showdown-heading';
+      heading.textContent = '输家结算';
+      block.appendChild(heading);
+
+      for (const result of results) {
+        const resultDiv = document.createElement('div');
+        resultDiv.className = 'player-result player-result-loser';
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'player-result-name';
+        const tags = [`剩 ${result.cardsLeft} 张`];
+        if (result.bombMultiplier > 1) tags.push(`炸弹×${result.bombMultiplier}`);
+        if (result.passThrough) tags.push('被通关×2');
+        if (result.capped) tags.push('已封顶');
+        nameDiv.textContent = `${result.name}（${tags.join(' ')}）`;
+
+        const cardsDiv = document.createElement('div');
+        cardsDiv.className = 'player-result-cards';
+        (result.holeCards ?? []).forEach((cardCode) => cardsDiv.appendChild(renderCard(cardCode)));
+
+        const amountDiv = document.createElement('div');
+        amountDiv.className = 'player-result-amount';
+        amountDiv.style.color = '#f87171';
+        amountDiv.textContent = `-${result.paid} 筹码`;
+
+        resultDiv.appendChild(nameDiv);
+        if (cardsDiv.childElementCount > 0) resultDiv.appendChild(cardsDiv);
+        resultDiv.appendChild(amountDiv);
+        block.appendChild(resultDiv);
+      }
+
+      modalResults.appendChild(block);
+    }
+  }
 
 })();

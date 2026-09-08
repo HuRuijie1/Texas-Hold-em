@@ -2424,3 +2424,145 @@ body.is-table-view .peek-btn {
   white-space: nowrap;
   align-self: center;
 }
+
+/* ===== 干瞪眼 ===== */
+.room-game-badge.gdy {
+  background: rgba(78, 205, 196, 0.2);
+  color: #4ecdc4;
+}
+
+/* 癞子（大小王）牌面：小王黑色 / 大王红色，中央金星 */
+.card.joker .rank { font-size: 0.7rem; }
+.card.joker .suit-symbol { font-size: 0.34rem; letter-spacing: 0.5px; }
+.card.joker .joker-star {
+  font-size: 1.3rem;
+  margin-top: -2px;
+  color: currentColor;
+}
+
+/* 干瞪眼手牌：可点选，选中上浮高亮 */
+.viewer-cards .card.gdy-hand-card {
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.viewer-cards .card.gdy-hand-card.selected {
+  transform: translateY(-8px);
+  box-shadow: 0 0 0 2px rgba(215, 180, 106, 0.9), 0 6px 14px rgba(0, 0, 0, 0.5);
+}
+
+/* 座位上的剩牌数 */
+.gdy-card-count {
+  font-size: 0.72rem;
+  color: var(--text-dim, #9aa0b4);
+  margin-top: 2px;
+}
+
+.gdy-action-grid {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ===== 干瞪眼底部栏：手牌整行放大 + 操作按钮换行 ===== */
+body.is-gdy-view .bottom-bar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+body.is-gdy-view .bottom-bar-hand,
+body.is-gdy-view .bottom-bar-actions,
+body.is-gdy-view .bottom-bar-log {
+  overflow: visible;
+}
+
+/* 手牌行：占满整行，卡牌放大、可换行、超高滚动 */
+body.is-gdy-view .bottom-bar-hand {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 10px 4px;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+body.is-gdy-view .viewer-cards {
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: flex-start;
+  gap: 6px;
+  min-height: clamp(84px, 20vw, 106px);
+  max-height: 26vh;
+  overflow-y: auto;
+  /* 选中牌上浮 8px + 高亮圈，顶部/左右留足空间避免被滚动容器裁剪 */
+  padding: 12px 8px 4px;
+}
+body.is-gdy-view .viewer-cards .card {
+  flex: 0 0 auto;
+  width: clamp(46px, 12vw, 62px);
+  height: clamp(64px, 17vw, 86px);
+}
+body.is-gdy-view .viewer-cards .card .corner { font-size: clamp(0.5rem, 1.6vw, 0.65rem); }
+body.is-gdy-view .viewer-cards .card .rank { font-size: clamp(0.75rem, 2.4vw, 0.95rem); }
+body.is-gdy-view .viewer-cards .card .suit-symbol { font-size: clamp(0.55rem, 1.8vw, 0.72rem); }
+body.is-gdy-view .viewer-cards .card .center-suit { font-size: clamp(1.1rem, 3.5vw, 1.5rem); }
+
+/* 操作行：独占一行，按钮加大、可换行 */
+body.is-gdy-view .bottom-bar-actions {
+  border-right: none;
+  padding: 6px 10px;
+}
+body.is-gdy-view .gdy-action-grid {
+  /* 覆盖各媒体查询里的 4 等分网格（repeat(4,1fr)）：改回弹性布局按内容排布 */
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+body.is-gdy-view .gdy-action-grid button {
+  /* 干瞪眼按钮按内容自适应宽度、禁止省略号截断（媒体查询里有 ellipsis + 4 等分网格规则） */
+  flex: 0 0 auto !important;
+  width: auto !important;
+  display: inline-block;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  padding: 11px 22px !important;
+  font-size: 1rem !important;
+  border-radius: 10px;
+}
+body.is-gdy-view .bottom-bar-actions .room-meta {
+  font-size: 0.75rem;
+  padding: 2px 4px 4px;
+}
+
+/* ===== 干瞪眼牌桌中央：上家出牌展示 ===== */
+.gdy-last-play {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.gdy-last-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent, #d7b46a);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(215, 180, 106, 0.35);
+  border-radius: 999px;
+  padding: 3px 12px;
+  white-space: nowrap;
+}
+.gdy-last-cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 82vw;
+}
+.gdy-last-cards .card { width: 44px; height: 62px; }
+.gdy-last-cards .card .corner { font-size: 0.45rem; }
+.gdy-last-cards .card .rank { font-size: 0.6rem; }
+.gdy-last-cards .card .suit-symbol { font-size: 0.45rem; }
+.gdy-last-cards .card .center-suit { font-size: 0.95rem; }

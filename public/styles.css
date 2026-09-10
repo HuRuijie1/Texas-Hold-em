@@ -2566,3 +2566,31 @@ body.is-gdy-view .bottom-bar-actions .room-meta {
 .gdy-last-cards .card .rank { font-size: 0.6rem; }
 .gdy-last-cards .card .suit-symbol { font-size: 0.45rem; }
 .gdy-last-cards .card .center-suit { font-size: 0.95rem; }
+
+/* ===== Root 管理面板 ===== */
+.panel-title-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.root-key-label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.root-key-label input {
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+}
+.root-room-list {
+  margin-top: 10px;
+  max-height: 46vh;
+  overflow-y: auto;
+}

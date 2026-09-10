@@ -399,6 +399,13 @@
     gdyStartingStack: $('gdyStartingStack'),
     gdyMaxSeats: $('gdyMaxSeats'),
     gdyActionTimeout: $('gdyActionTimeout'),
+    rootAdminBtn: $('rootAdminBtn'),
+    rootModal: $('rootModal'),
+    rootKeyInput: $('rootKeyInput'),
+    rootLoadBtn: $('rootLoadBtn'),
+    rootError: $('rootError'),
+    rootRoomList: $('rootRoomList'),
+    rootCloseBtn: $('rootCloseBtn'),
 
   };
 
@@ -2021,7 +2028,21 @@
 
   });
 
+  // 隐藏入口：2 秒内连续点击「刷新」5 次解锁 root 管理按钮（刷新页面后重新隐藏）
+  const rootReveal = { clicks: 0, lastAt: 0, unlocked: false };
+
   elements.refreshRoomsBtn.addEventListener('click', () => {
+
+    if (!rootReveal.unlocked) {
+      const nowMs = Date.now();
+      rootReveal.clicks = nowMs - rootReveal.lastAt <= 2000 ? rootReveal.clicks + 1 : 1;
+      rootReveal.lastAt = nowMs;
+      if (rootReveal.clicks >= 5) {
+        rootReveal.unlocked = true;
+        elements.rootAdminBtn.classList.remove('hidden');
+        showToast('已进入管理员模式');
+      }
+    }
 
     socket.emit('rooms:list', {}, (result) => {
 
@@ -3326,6 +3347,7 @@ nextHandBtn.addEventListener('click', () => {
   function gdySeatTags(room, player) {
     const tags = [];
     if (player.isHost) tags.push('房主');
+    if (player.isBot) tags.push('🤖 ' + (BOT_LEVEL_LABELS[player.botLevel] || '机器人'));
     if (!player.connected) tags.push('离线');
     if (player.sitOut) tags.push('暂离');
     if (room.hand?.status !== 'running' && player.seatIndex !== null && player.stack > 0 && !player.sitOut) {
@@ -3500,7 +3522,7 @@ nextHandBtn.addEventListener('click', () => {
         const manageButton = document.createElement('button');
         manageButton.type = 'button';
         manageButton.className = 'ghost seat-manage-btn';
-        manageButton.textContent = '踢出';
+        manageButton.textContent = seat.player.isBot ? '移除 AI' : '踢出';
         manageButton.disabled = room.summary?.handStatus === 'running';
         manageButton.addEventListener('click', () => manageMember(seat.player));
         card.append(manageButton);
@@ -3525,6 +3547,11 @@ nextHandBtn.addEventListener('click', () => {
       elements.actionPanel.append(hint);
       updateTurnCountdown();
       return;
+    }
+
+    // 吃不起快速过：倒计时条按服务端下发的实际时限显示（3 秒）
+    if (actions.timeoutMs) {
+      state.actionTimeoutMs = actions.timeoutMs;
     }
 
     const lastPlay = actions.lastPlay;
@@ -3572,7 +3599,9 @@ nextHandBtn.addEventListener('click', () => {
     const hint = document.createElement('div');
     hint.className = 'room-meta';
     if (lastPlay) {
-      hint.textContent = `${lastPlay.name} 出了 ${lastPlay.label}：只能用紧邻大一号的同型牌接（2 通吃单张/对子），或用炸弹`;
+      hint.textContent = actions.canBeat === false
+        ? '吃不起，倒计时结束自动过'
+        : `${lastPlay.name} 出了 ${lastPlay.label}：只能用紧邻大一号的同型牌接（2 通吃单张/对子），或用炸弹`;
     } else {
       hint.textContent = '轮到你自由出牌（不能过）：点选手牌后点「出牌」；双王需带一张普通牌作炸弹';
     }
@@ -3679,6 +3708,132 @@ nextHandBtn.addEventListener('click', () => {
 
       modalResults.appendChild(block);
     }
+  }
+
+
+  // ===== Root 管理面板：密钥加载全部房间、强制删除 =====
+  const GAME_BADGES = { texas: '德州', zjh: '炸金花', gdy: '干瞪眼' };
+
+  function openRootModal() {
+    // 不回显已保存的密钥（输入框留空；后台保存的密钥仍自动用于请求）
+    elements.rootKeyInput.value = '';
+    elements.rootError.textContent = '';
+    elements.rootRoomList.innerHTML = '';
+    elements.rootModal.classList.remove('hidden');
+    elements.rootKeyInput.focus();
+    if (localStorage.getItem('root-key')) loadRootRooms();
+  }
+
+  async function loadRootRooms() {
+    const key = elements.rootKeyInput.value.trim() || localStorage.getItem('root-key') || '';
+    if (!key) {
+      elements.rootError.textContent = '请输入管理密钥';
+      return;
+    }
+    elements.rootError.textContent = '';
+    elements.rootRoomList.innerHTML = '';
+    const loading = document.createElement('p');
+    loading.className = 'room-list-empty';
+    loading.textContent = '加载中...';
+    elements.rootRoomList.append(loading);
+    try {
+      const response = await fetch(`/api/root/rooms?key=${encodeURIComponent(key)}`);
+      if (response.status === 403) {
+        localStorage.removeItem('root-key');
+        elements.rootError.textContent = '密钥错误，请重新输入';
+        elements.rootRoomList.innerHTML = '';
+        return;
+      }
+      if (!response.ok) throw new Error('bad status');
+      localStorage.setItem('root-key', key);
+      const data = await response.json();
+      renderRootRooms(data.rooms || []);
+    } catch {
+      elements.rootError.textContent = '加载失败，请稍后重试';
+      elements.rootRoomList.innerHTML = '';
+    }
+  }
+
+  function renderRootRooms(rooms) {
+    elements.rootRoomList.innerHTML = '';
+    if (!rooms.length) {
+      const empty = document.createElement('p');
+      empty.className = 'room-list-empty';
+      empty.textContent = '当前没有任何房间';
+      elements.rootRoomList.append(empty);
+      return;
+    }
+    for (const room of rooms) {
+      const item = document.createElement('div');
+      item.className = 'room-item';
+
+      const info = document.createElement('div');
+      const nameRow = document.createElement('div');
+      const badge = document.createElement('span');
+      badge.className = `room-game-badge ${room.gameType}`;
+      badge.textContent = GAME_BADGES[room.gameType] ?? room.gameType;
+      const name = document.createElement('strong');
+      name.textContent = room.name;
+      nameRow.append(badge, name);
+
+      const meta = document.createElement('div');
+      meta.className = 'room-meta';
+      const status = room.handStatus === 'running' ? '进行中' : '等待中';
+      const connected = room.connectedPlayers > 0 ? `${room.connectedPlayers} 在线` : '无人在线';
+      meta.textContent = `${room.code} · ${room.seatsTaken}/${room.seatsTotal} · ${status} · ${connected}`;
+      info.append(nameRow, meta);
+
+      const button = document.createElement('button');
+      button.textContent = '关闭房间';
+      button.className = 'ghost';
+      button.addEventListener('click', async () => {
+        if (!confirm(`确定强制关闭房间 ${room.code}（${room.name}）吗？在线玩家会被退回大厅。`)) return;
+        button.disabled = true;
+        try {
+          const response = await fetch('/api/root/rooms/close', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: elements.rootKeyInput.value.trim(), code: room.code }),
+          });
+          if (response.status === 403) {
+            elements.rootError.textContent = '密钥错误';
+            return;
+          }
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            showToast(data.error || '关闭失败', true);
+            return;
+          }
+          showToast(`已关闭房间 ${room.code}`);
+        } catch {
+          showToast('关闭失败，请稍后重试', true);
+        } finally {
+          loadRootRooms();
+        }
+      });
+
+      item.append(info, button);
+      elements.rootRoomList.append(item);
+    }
+  }
+
+  if (elements.rootAdminBtn) {
+    elements.rootAdminBtn.addEventListener('click', openRootModal);
+    elements.rootLoadBtn.addEventListener('click', loadRootRooms);
+    elements.rootKeyInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') loadRootRooms();
+    });
+    elements.rootCloseBtn.addEventListener('click', () => {
+      elements.rootModal.classList.add('hidden');
+    });
+    elements.rootModal.querySelector('.modal-close').addEventListener('click', () => {
+      elements.rootModal.classList.add('hidden');
+    });
+    elements.rootModal.addEventListener('click', (event) => {
+      if (event.target === elements.rootModal) {
+        elements.rootModal.classList.add('hidden');
+      }
+    });
   }
 
 })();

@@ -7,9 +7,11 @@ import {
   evaluateGdyPlay,
   formatGdyCards,
   gdyBeats,
+  gdyCanBeatHand,
 } from '../src/gdy.js';
 import { GdyManager, GDY_DEFAULT_CONFIG } from '../src/gdy-engine.js';
 import { createRealtimeApp } from '../src/realtime-app.js';
+import { decideGdyBotTurn, enumerateGdyPlays } from '../src/gdy-bot.js';
 
 class MemoryStore {
   constructor() {
@@ -243,6 +245,93 @@ test('一副干瞪眼镜共 54 张且含双王', () => {
   assert.equal(deck.length, 54);
   assert.equal(deck.filter((card) => card === 'RJ').length, 1);
   assert.equal(deck.filter((card) => card === 'BJ').length, 1);
+});
+
+// ===== 吃牌判定（吃不起 3 秒自动过） =====
+
+test('吃牌判定：顺移一号 / 2 通吃 / 炸弹 / 癞子组合', () => {
+  const play = (cards) => evaluateGdyPlay(cards);
+  const beat = (hand, last) => gdyCanBeatHand(hand, evaluateGdyPlay(last));
+
+  // 单张：10 只能被 J 或 2 接
+  assert.ok(beat(['JH'], ['TH']));
+  assert.ok(!beat(['QH', 'KH'], ['TH']));
+  assert.ok(beat(['2H'], ['TH']));
+  assert.ok(!beat(['AH'], ['2H']));           // 2 之上只有炸弹
+  assert.ok(!beat(['RJ', 'BJ'], ['TH']));      // 纯癞子接不了单张
+
+  // 单张接不了但有炸弹
+  assert.ok(beat(['3H', '3S', '3D'], ['2H']));
+  assert.ok(beat(['5H', 'RJ', 'BJ'], ['TH'])); // 双癞+真牌 = 炸弹
+
+  // 对子：顺移、对 2 通吃、癞子补半对
+  assert.ok(beat(['9H', '9S'], ['8H', '8S']));
+  assert.ok(beat(['9H', 'RJ'], ['8H', '8S']));
+  assert.ok(!beat(['JH', 'JS'], ['8H', '8S']));
+  assert.ok(beat(['2H', '2S'], ['AH', 'AS']));
+  assert.ok(!beat(['RJ', 'BJ'], ['8H', '8S']));
+
+  // 顺子：567 只能被 678 接（癞子可补缺）
+  assert.ok(beat(['6H', '7S', '8D'], ['5H', '6S', '7D']));
+  assert.ok(beat(['6H', '7S', 'RJ'], ['5H', '6S', '7D']));
+  assert.ok(!beat(['8H', '9S', 'TD'], ['5H', '6S', '7D']));
+  assert.ok(beat(['QH', 'KS', 'AD'], ['JH', 'QS', 'KD']));   // QKA 顺移接 JQK
+  assert.ok(!beat(['JH', 'QS', 'KD'], ['QH', 'KS', 'AD']));  // 最大顺只能被炸弹接
+  assert.ok(beat(['5H', '5S', '5D'], ['QH', 'KS', 'AD']));   // 炸弹可以接最大顺
+
+  // 炸弹对炸弹：先比张数再比点数，同点真牌压制
+  assert.ok(beat(['7H', '7S', '7D'], ['5H', '5S', '5D']));
+  assert.ok(!beat(['3H', '3S', '3D'], ['5H', '5S', '5D']));
+  assert.ok(!beat(['5H', '5S', '5D'], ['5H', '5S', '5D']));
+  assert.ok(!beat(['5H', '5S', 'RJ'], ['5H', '5S', '5D']));
+  assert.ok(beat(['5H', '5S', '5D'], ['5H', '5S', 'RJ']));  // 真三张压含癞三张
+  assert.ok(beat(['5H', '5S', '5D', '5C'], ['9H', '9S', '9D'])); // 四张炸接三张炸
+  assert.ok(!beat(['5H', '5S', '5D', 'RJ'], ['5H', '5S', '5D', '5C']));
+});
+
+// ===== 机器人 =====
+
+test('枚举手牌组合：全部组合合法且包含预期牌型', () => {
+  const plays = enumerateGdyPlays(['3H', '3S', '4D', '5C', 'RJ']);
+  for (const entry of plays) {
+    assert.ok(evaluateGdyPlay(entry.cards), `组合应合法: ${entry.cards}`);
+  }
+  // 含：单张、对3、对4、对5、顺子345、癞子顺345/456、炸弹333 等
+  const has = (predicate) => plays.some(predicate);
+  assert.ok(has((entry) => entry.play.type === GDY_PLAY_TYPE.BOMB && entry.play.rank === 3));
+  assert.ok(has((entry) => entry.play.type === GDY_PLAY_TYPE.STRAIGHT && entry.play.rank === 5));
+  assert.ok(has((entry) => entry.play.type === GDY_PLAY_TYPE.STRAIGHT && entry.play.rank === 6));
+  assert.ok(has((entry) => entry.play.type === GDY_PLAY_TYPE.PAIR && entry.play.rank === 5));
+});
+
+test('机器人决策：能赢直接出完、接牌出最小的、接不上过牌', () => {
+  const mkRoom = (lastPlay) => ({ hand: { lastPlay } });
+
+  // 自由出牌：剩两张 4,5 → 单张 4（点数最小优先，非炸弹）
+  const free = decideGdyBotTurn(mkRoom(null), { holeCards: ['4H', '5S'] });
+  assert.equal(free.action.type, 'play');
+  assert.deepEqual(free.action.cards, ['4H']);
+
+  // 自由出牌：整手一副顺子 → 直接出完获胜
+  const win = decideGdyBotTurn(mkRoom(null), { holeCards: ['3H', '4S', '5D'] });
+  assert.equal(win.action.cards.length, 3);
+
+  // 跟牌单张 5：手里 6 / 9 → 出 6（最小）
+  const beat = decideGdyBotTurn(mkRoom({ seatIndex: 0, play: evaluateGdyPlay(['5H']), cards: ['5H'] }), { holeCards: ['6H', '9S'] });
+  assert.deepEqual(beat.action.cards, ['6H']);
+
+  // 跟牌接不上 → 过
+  const pass = decideGdyBotTurn(mkRoom({ seatIndex: 0, play: evaluateGdyPlay(['2H']), cards: ['2H'] }), { holeCards: ['3H', '4S'] });
+  assert.equal(pass.action.type, 'pass');
+
+  // 回归：只剩一张接不上的牌时，"一次出完"捷径不得绕过压牌校验（曾导致机器人死循环卡局）
+  const lastCard = decideGdyBotTurn(mkRoom({ seatIndex: 0, play: evaluateGdyPlay(['2H']), cards: ['2H'] }), { holeCards: ['KD'] });
+  assert.equal(lastCard.action.type, 'pass');
+
+  // 跟牌单张只有炸弹能接 → 出炸弹
+  const bomb = decideGdyBotTurn(mkRoom({ seatIndex: 0, play: evaluateGdyPlay(['2H']), cards: ['2H'] }), { holeCards: ['7H', '7S', '7D'] });
+  assert.equal(bomb.action.type, 'play');
+  assert.equal(bomb.action.cards.length, 3);
 });
 
 // ===== 引擎流程 =====
@@ -488,6 +577,76 @@ test('四张炸弹倍率 ×4，且能接三张炸弹', () => {
   manager.applyAction(code, other, { type: 'play', cards: ['8H'] });
   assert.equal(room.hand.status, 'finished');
   assert.equal(room.hand.results[0].bombMultiplier, 8);
+});
+
+test('机器人：添加后自动准备、开局并在轮到时自动行动', () => {
+  const store = new MemoryStore();
+  const manager = new GdyManager(store, { config: { ...GDY_DEFAULT_CONFIG, actionTimeoutMs: 30000 } });
+  const created = manager.createRoom({ token: 't1', playerName: '甲' });
+  const code = created.room.code;
+  manager.addBot(code, 't1', 'beginner');
+  const room = manager.getRoom(code);
+  const bot = room.players.find((player) => player.isBot);
+  assert.ok(bot);
+  assert.equal(bot.seatIndex, 1);
+
+  // 固定庄家为机器人（首局默认随机，避免测试随机轮到真人）
+  room.dealerSeat = 1;
+
+  // 只有 1 名真人 → 无需准备直接开局
+  manager.startHand(code, 't1');
+  assert.equal(room.hand.status, 'running');
+  // 机器人手牌 5 或 6 张（庄家随机）
+  assert.ok(bot.holeCards.length === 5 || bot.holeCards.length === 6);
+
+  // 机器人应在思考延迟（≤1.6 秒）内行动，而不是卡满整个超时时限
+  let acted = room.hand.lastPlay !== null || room.hand.status === 'finished';
+  for (let i = 1; i <= 4 && !acted; i += 1) {
+    manager.tick(Date.now() + i * 1000);
+    acted = room.hand.playerStreetActions[bot.seatIndex] != null || room.hand.status === 'finished';
+  }
+  assert.ok(acted, '机器人应在 ~2 秒内自动行动');
+  assert.ok(room.hand.playerStreetActions[bot.seatIndex] != null);
+
+  // 对局进行中不能移除机器人；空房间可以
+  assert.throws(() => manager.removeBot(code, 't1', bot.token), /对局进行中/);
+  const created2 = manager.createRoom({ token: 't1', playerName: '甲' });
+  manager.addBot(created2.room.code, 't1', 'beginner');
+  const bot2 = manager.getRoom(created2.room.code).players.find((player) => player.isBot);
+  manager.removeBot(created2.room.code, 't1', bot2.token);
+  assert.ok(!manager.getRoom(created2.room.code).players.some((player) => player.isBot));
+});
+
+test('吃不起：3 秒快速截止并自动过牌', () => {
+  const { manager, code } = makeRoom({ actionTimeoutMs: 30000 });
+  manager.toggleReady(code, 't1');
+  manager.toggleReady(code, 't2');
+  const room = manager.getRoom(code);
+  const dealerSeat = room.hand.dealerSeat;
+  const otherSeat = dealerSeat === 0 ? 1 : 0;
+  room.hand.deck = [];
+  room.hand.deckIndex = 0;
+  playerBySeat(room, dealerSeat).holeCards = ['2H', '3H', '3S', '3D', 'KH', 'KH'];
+  playerBySeat(room, otherSeat).holeCards = ['7H', '8S', '9D', 'TC', 'JH'];
+
+  const dealer = dealerSeat === 0 ? 't1' : 't2';
+  const other = dealerSeat === 0 ? 't2' : 't1';
+
+  // 庄家出单张 2，对家没有炸弹、没有比 2 大的单张 → 吃不起
+  manager.applyAction(code, dealer, { type: 'play', cards: ['2H'] });
+  const before = Date.now();
+  assert.ok(room.hand.turnDeadlineAt <= before + 3100, '吃不起时限应为 3 秒左右');
+  assert.ok(room.hand.turnDeadlineAt >= before + 2500);
+
+  // 视图字段：canBeat=false + timeoutMs=3000，前端倒计时条按 3 秒展示
+  const view = manager.getRoomView(code, other);
+  assert.equal(view.hand.availableActions.canBeat, false);
+  assert.equal(view.hand.availableActions.timeoutMs, 3000);
+
+  // 截止后 tick 自动过牌
+  manager.tick(before + 4000);
+  assert.equal(room.hand.lastPlay, null);
+  assert.equal(room.hand.turnSeat, dealerSeat);
 });
 
 test('超时托管：跟牌超时自动过，自由出牌超时自动出最小单张', () => {

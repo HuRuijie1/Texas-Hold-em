@@ -14,6 +14,9 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
   }));
 
+  // root 管理密钥：环境变量 ROOT_KEY 可覆盖，默认 root123（仅适合内网/私人部署，公网务必改掉）
+  const rootKey = process.env.ROOT_KEY ?? 'root123';
+
   let io = null;
 
   // 三款游戏共用的广播回调
@@ -125,6 +128,34 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
       return;
     }
     res.json({ history: manager.listHandHistory(req.params.code, Number(req.query.limit ?? 10)) });
+  });
+
+  // ===== root 管理：查看全部房间 / 强制删除房间（含进行中对局） =====
+  app.get('/api/root/rooms', (req, res) => {
+    if (String(req.query.key ?? '') !== rootKey) {
+      res.status(403).json({ error: '密钥错误' });
+      return;
+    }
+    res.json({ rooms: mergedRooms() });
+  });
+
+  app.post('/api/root/rooms/close', (req, res) => {
+    if (String(req.body?.key ?? '') !== rootKey) {
+      res.status(403).json({ error: '密钥错误' });
+      return;
+    }
+    const manager = locateManager(req.body?.code);
+    if (!manager) {
+      res.status(404).json({ error: '房间不存在' });
+      return;
+    }
+    try {
+      const removed = manager.rootRemoveRoom(req.body.code);
+      emitRoomsList();
+      res.json({ ok: true, ...removed });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
   });
 
   const server = http.createServer(app);
@@ -444,6 +475,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     manager: gameManager,
     zjhManager,
     gdyManager,
+    rootKey,
     store,
     close() {
       clearInterval(timer);

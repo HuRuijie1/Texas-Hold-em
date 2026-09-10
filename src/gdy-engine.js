@@ -6,9 +6,12 @@ import {
   evaluateGdyPlay,
   formatGdyCards,
   gdyBeats,
+  gdyCanBeatHand,
   gdyRankValue,
   isGdyJoker,
 } from './gdy.js';
+import { decideGdyBotTurn } from './gdy-bot.js';
+import { botLevelLabel, normalizeBotLevel } from './bot-ai.js';
 
 export const GDY_DEFAULT_CONFIG = {
   maxSeats: 5,       // 座位数（2-5 人玩，一副 54 张牌）
@@ -16,6 +19,7 @@ export const GDY_DEFAULT_CONFIG = {
   baseScore: 1,      // 底分：输家每剩一张牌扣 baseScore 分
   scoreCap: 100,     // 单局单人封顶扣分，0 = 不封顶
   actionTimeoutMs: 30000,
+  quickPassMs: 3000, // 跟牌时判定吃不起的快速过牌时限
   disconnectGraceMs: 120000,
 };
 
@@ -50,6 +54,7 @@ function normalizeGdyConfig(config = {}) {
     baseScore: clamp(Math.floor(normalizedNumber(config.baseScore ?? GDY_DEFAULT_CONFIG.baseScore, GDY_DEFAULT_CONFIG.baseScore)), 1, 1000000),
     scoreCap: clamp(Math.floor(normalizedNumber(config.scoreCap ?? GDY_DEFAULT_CONFIG.scoreCap, GDY_DEFAULT_CONFIG.scoreCap)), 0, 1000000),
     actionTimeoutMs: clamp(Math.floor(normalizedNumber(config.actionTimeoutMs ?? GDY_DEFAULT_CONFIG.actionTimeoutMs, GDY_DEFAULT_CONFIG.actionTimeoutMs)), 5000, 120000),
+    quickPassMs: clamp(Math.floor(normalizedNumber(config.quickPassMs ?? GDY_DEFAULT_CONFIG.quickPassMs, GDY_DEFAULT_CONFIG.quickPassMs)), 1000, 60000),
     disconnectGraceMs: clamp(Math.floor(normalizedNumber(config.disconnectGraceMs ?? GDY_DEFAULT_CONFIG.disconnectGraceMs, GDY_DEFAULT_CONFIG.disconnectGraceMs)), 10000, 900000),
   };
   return normalized;
@@ -74,6 +79,8 @@ function makeGdyPlayer(token, name, stack) {
     inHand: false,
     holeCards: [],
     isBot: false,
+    botLevel: null,
+    botCreatedAt: null,
   };
 }
 
@@ -98,6 +105,9 @@ function normalizeGdyPlayer(player, fallbackStack) {
     inHand: Boolean(player.inHand),
     holeCards: Array.isArray(player.holeCards) ? [...player.holeCards] : [],
     isBot: Boolean(player.isBot),
+    botLevel: player.botLevel ?? null,
+    botCreatedAt: player.botCreatedAt == null ? null : Number(player.botCreatedAt),
+    botDecision: null,
   };
 }
 
@@ -239,6 +249,15 @@ function removeCardsFromHand(player, cards) {
   return true;
 }
 
+// 该玩家的行动时限：跟牌但吃不起 → quickPassMs（到点自动过），其余正常时限
+function turnDeadlineFor(room, player) {
+  const hand = room.hand;
+  if (hand.lastPlay && !gdyCanBeatHand(player.holeCards, hand.lastPlay.play)) {
+    return now() + room.config.quickPassMs;
+  }
+  return now() + room.config.actionTimeoutMs;
+}
+
 // 轮转推进：一圈全过 → 出牌最大者摸 1 张并重获自由出牌权；
 // 否则轮到下一位 inHand 玩家（自由出牌者若只剩癞子则跳过）
 function proceedAfterAction(room) {
@@ -259,7 +278,7 @@ function proceedAfterAction(room) {
       } else {
         appendLog(room, 'draw', `${leader.name} 一圈最大，获得出牌权（牌堆已空）`);
       }
-      hand.turnDeadlineAt = now() + room.config.actionTimeoutMs;
+      hand.turnDeadlineAt = turnDeadlineFor(room, leader);
       return;
     }
   }
@@ -275,7 +294,7 @@ function proceedAfterAction(room) {
       continue;
     }
     hand.turnSeat = seat;
-    hand.turnDeadlineAt = now() + room.config.actionTimeoutMs;
+    hand.turnDeadlineAt = turnDeadlineFor(room, next);
     return;
   }
 }
@@ -404,10 +423,13 @@ function applyGdyPlayerAction(room, player, action, store) {
 
 export function gdyActionOptions(room, player) {
   const lastPlay = room.hand.lastPlay;
+  const canBeat = gdyCanBeatHand(player.holeCards, lastPlay?.play ?? null);
   return {
     freePlay: lastPlay == null,
     mustPlay: lastPlay == null,
     canPass: lastPlay != null,
+    canBeat,
+    timeoutMs: lastPlay && !canBeat ? room.config.quickPassMs : room.config.actionTimeoutMs,
     handSize: player.holeCards.length,
     lastPlay: lastPlay
       ? {
@@ -479,6 +501,8 @@ function gdyPlayerView(room, viewerToken, player) {
     cardCount: player.holeCards.length,
     holeCards: revealCards ? [...player.holeCards] : [],
     isViewer,
+    isBot: player.isBot || false,
+    botLevel: player.botLevel || null,
   };
 }
 
@@ -745,15 +769,38 @@ export class GdyManager {
     return room;
   }
 
-  addBot() {
-    throw new Error('干瞪眼暂不支持机器人');
+  addBot(code, hostToken, level = 'beginner') {
+    const room = this.getRoom(code);
+    if (!room) throw new Error('房间不存在');
+    const host = room.players.find((entry) => entry.token === hostToken);
+    if (!host || !host.isHost) throw new Error('只有房主可以添加机器人');
+    if (room.hand?.status === 'running') throw new Error('对局进行中不能添加机器人');
+
+    const botLevel = normalizeBotLevel(level);
+    const botToken = makeGdyToken();
+    const botName = 'Bot_' + botLevelLabel(botLevel) + '_' + botToken.slice(0, 4);
+    const bot = makeGdyPlayer(botToken, botName, room.config.startingStack);
+    bot.isBot = true;
+    bot.botLevel = botLevel;
+    bot.botCreatedAt = now();
+
+    const occupiedSeats = new Set(room.players.filter((entry) => entry.seatIndex !== null).map((entry) => entry.seatIndex));
+    let seatIndex = null;
+    for (let i = 0; i < room.config.maxSeats; i += 1) {
+      if (!occupiedSeats.has(i)) { seatIndex = i; break; }
+    }
+    if (seatIndex === null) throw new Error('没有空座位');
+    bot.seatIndex = seatIndex;
+    bot.seatJoinHandNo = room.handNo + 1;
+    bot.everSeated = true;
+
+    room.players.push(bot);
+    appendLog(room, 'room', `${host.name} 添加了机器人 ${botName} (${botLevelLabel(botLevel)}) 在 ${seatIndex + 1} 号位`);
+    this.emit(room);
+    return room;
   }
 
-  removeBot() {
-    throw new Error('干瞪眼没有机器人');
-  }
-
-  removeMember(code, hostToken, targetToken) {
+  removeMember(code, hostToken, targetToken, { requireBot = false, requireHuman = false } = {}) {
     const room = this.getRoom(code);
     if (!room) throw new Error('房间不存在');
 
@@ -762,15 +809,17 @@ export class GdyManager {
     if (room.hand?.status === 'running') throw new Error('对局进行中不能踢人');
 
     const target = room.players.find((player) => player.token === targetToken);
-    if (!target) throw new Error('目标玩家不存在');
+    if (!target) throw new Error(requireBot ? '机器人不存在' : '目标玩家不存在');
     if (target.token === hostToken) throw new Error('不能踢自己');
     if (target.isHost) throw new Error('不能踢房主');
+    if (requireBot && !target.isBot) throw new Error('目标不是机器人');
+    if (requireHuman && target.isBot) throw new Error('请使用移除机器人功能');
 
     if (target.everSeated) {
       const record = {
         token: target.token,
         name: target.name,
-        isBot: false,
+        isBot: Boolean(target.isBot),
         totalBuyIn: target.totalBuyIn,
         stack: target.stack,
         leftAt: now(),
@@ -783,13 +832,18 @@ export class GdyManager {
 
     room.players = room.players.filter((player) => player.token !== targetToken);
     delete room.socketMap[targetToken];
-    appendLog(room, 'room', `${host.name} 踢出了 ${target.name}`);
+    const action = target.isBot ? '移除了机器人' : '踢出了';
+    appendLog(room, 'room', `${host.name} ${action} ${target.name}`);
     this.emit(room);
     return room;
   }
 
+  removeBot(code, hostToken, botToken) {
+    return this.removeMember(code, hostToken, botToken, { requireBot: true });
+  }
+
   kickPlayer(code, hostToken, targetToken) {
-    return this.removeMember(code, hostToken, targetToken);
+    return this.removeMember(code, hostToken, targetToken, { requireHuman: true });
   }
 
   rebuy(code, token, amount) {
@@ -884,6 +938,31 @@ export class GdyManager {
       throw new Error('还有玩家未准备');
     }
 
+    // 输光的机器人自动离场
+    const bustedBots = room.players.filter((player) => player.isBot && player.seatIndex !== null && player.stack <= 0);
+    if (bustedBots.length) {
+      for (const bot of bustedBots) {
+        appendLog(room, 'room', `自动移除输光的机器人 ${bot.name}`);
+        delete room.socketMap[bot.token];
+        if (bot.everSeated) {
+          const record = {
+            token: bot.token,
+            name: bot.name,
+            isBot: true,
+            totalBuyIn: bot.totalBuyIn,
+            stack: bot.stack,
+            handStartStack: bot.handStartStack,
+            leftAt: now(),
+          };
+          room.departedPlayers = [
+            ...(room.departedPlayers ?? []).filter((entry) => entry.token !== bot.token),
+            record,
+          ];
+        }
+      }
+      room.players = room.players.filter((player) => !bustedBots.includes(player));
+    }
+
     room.handNo += 1;
     const dealerSeat = this.resolveGdyDealer(room, participants);
     room.dealerSeat = dealerSeat;
@@ -951,8 +1030,8 @@ export class GdyManager {
 
     for (const [code, room] of this.rooms) {
       const hasConnectedPlayer = room.players.some((player) => player.connected);
-      const handRunning = room.hand?.status === 'running';
-      if (hasConnectedPlayer || handRunning || room.updatedAt >= cutoffTime) continue;
+      if (hasConnectedPlayer || room.updatedAt >= cutoffTime) continue;
+      this.onClose(room, { reason: 'cleaned' });
       this.rooms.delete(code);
       this.store.deleteRoom(code);
       cleanedCount++;
@@ -971,7 +1050,7 @@ export class GdyManager {
       const disconnectGraceMs = room.config.disconnectGraceMs;
 
       for (const player of room.players) {
-        if (player.connected || player.sitOut) continue;
+        if (player.connected || player.isBot || player.sitOut) continue;
         if (player.disconnectedAt && (time - player.disconnectedAt) > disconnectGraceMs) {
           player.sitOut = true;
           appendLog(room, 'system', `${player.name} 因长时间离线自动设为观战状态`);
@@ -979,15 +1058,57 @@ export class GdyManager {
       }
 
       if (!room.hand || room.hand.status !== 'running') continue;
-      if (!room.hand.turnDeadlineAt || room.hand.turnDeadlineAt > time) continue;
+      if (!room.hand.turnDeadlineAt) continue;
 
       const player = playerAtSeat(room, room.hand.turnSeat);
+      if (player && player.isBot) {
+        // 机器人回合：按状态计算一次决策，到"思考时间"后落子
+        const hand = room.hand;
+        const stateKey = `${hand.id}|${hand.turnSeat}|${hand.lastPlay ? hand.lastPlay.cards.join(',') : 'free'}|${player.holeCards.slice().sort().join(',')}`;
+        if (!player.botDecision || player.botDecision.stateKey !== stateKey) {
+          const decision = decideGdyBotTurn(room, player);
+          player.botDecision = {
+            stateKey,
+            action: decision.action,
+            readyAt: now() + decision.delayMs,
+          };
+          // 思考期间不受吃不起 3 秒快速过限制
+          hand.turnDeadlineAt = player.botDecision.readyAt + room.config.actionTimeoutMs;
+        }
+        if (time < player.botDecision.readyAt) continue;
+
+        const botAction = player.botDecision.action;
+        player.botDecision = null;
+        try {
+          applyGdyPlayerAction(room, player, botAction, this.store);
+        } catch (error) {
+          // 决策与校验不一致的兜底：回退为过牌/最小单张，绝不让机器人死循环卡局
+          appendLog(room, 'system', `机器人行动异常已回退：${error.message}`);
+          try {
+            if (hand.lastPlay) {
+              applyGdyPlayerAction(room, player, { type: 'pass' }, this.store);
+            } else {
+              const smallest = player.holeCards
+                .filter((card) => !isGdyJoker(card))
+                .sort((a, b) => gdyRankValue(a) - gdyRankValue(b))[0];
+              applyGdyPlayerAction(room, player, { type: 'play', cards: [smallest] }, this.store);
+            }
+          } catch (fallbackError) {
+            console.error('gdy bot fallback failed:', fallbackError.message);
+          }
+        }
+        this.emit(room);
+        continue;
+      }
       if (!player || !player.inHand) {
         // 状态异常兜底：推进轮转避免卡局
         proceedAfterAction(room);
         this.emit(room);
         continue;
       }
+
+      // 真人玩家：时限未到不托管（机器人分支在上面已提前处理）
+      if (room.hand.turnDeadlineAt > time) continue;
 
       if (room.hand.lastPlay == null) {
         // 自由出牌超时：自动出最小的单张；只剩癞子则跳过
@@ -1025,7 +1146,7 @@ export class GdyManager {
     for (const departed of room.departedPlayers ?? []) {
       byToken.set(departed.token, {
         name: departed.name,
-        isBot: false,
+        isBot: Boolean(departed.isBot),
         totalBuyIn: Number(departed.totalBuyIn) || 0,
         currentStack: Number(departed.stack) || 0,
       });
@@ -1034,7 +1155,7 @@ export class GdyManager {
       if (!player.everSeated) continue;
       byToken.set(player.token, {
         name: player.name,
-        isBot: false,
+        isBot: Boolean(player.isBot),
         totalBuyIn: player.totalBuyIn,
         currentStack: player.stack,
       });
@@ -1053,5 +1174,16 @@ export class GdyManager {
     this.rooms.delete(code);
     this.store.deleteRoom(code);
     return { settlements, roomName: room.name, settledAt: Date.now() };
+  }
+
+  // root 管理：强制删除房间（无需房主、允许对局进行中），在线成员会收到 room:closed
+  rootRemoveRoom(code) {
+    const room = this.getRoom(code);
+    if (!room) throw new Error('房间不存在');
+    appendLog(room, 'room', '管理员强制关闭房间');
+    this.onClose(room, { reason: 'admin_removed' });
+    this.rooms.delete(room.code);
+    this.store.deleteRoom(room.code);
+    return { code: room.code, name: room.name };
   }
 }

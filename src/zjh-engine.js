@@ -1188,8 +1188,8 @@ export class ZjhManager {
 
     for (const [code, room] of this.rooms) {
       const hasConnectedPlayer = room.players.some((player) => player.connected);
-      const handRunning = room.hand?.status === 'running';
-      if (hasConnectedPlayer || handRunning || room.updatedAt >= cutoffTime) continue;
+      if (hasConnectedPlayer || room.updatedAt >= cutoffTime) continue;
+      this.onClose(room, { reason: 'cleaned' });
       this.rooms.delete(code);
       this.store.deleteRoom(code);
       cleanedCount++;
@@ -1309,5 +1309,16 @@ export class ZjhManager {
     this.store.deleteRoom(code);
 
     return { settlements, roomName: room.name, settledAt: Date.now() };
+  }
+
+  // root 管理：强制删除房间（无需房主、允许对局进行中），在线成员会收到 room:closed
+  rootRemoveRoom(code) {
+    const room = this.getRoom(code);
+    if (!room) throw new Error('房间不存在');
+    appendLog(room, 'room', '管理员强制关闭房间');
+    this.onClose(room, { reason: 'admin_removed' });
+    this.rooms.delete(room.code);
+    this.store.deleteRoom(room.code);
+    return { code: room.code, name: room.name };
   }
 }

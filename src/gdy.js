@@ -217,3 +217,79 @@ export function describeGdyPlay(play) {
       return name;
   }
 }
+
+// 判断手牌中是否至少存在一种组合能接掉 lastPlay（用于"吃不起 3 秒自动过"）。
+// 判定口径与 gdyBeats 完全一致：非炸弹同型顺移一号（单张/对子另加 2 通吃），
+// 炸弹吃一切非炸弹、炸弹之间先比张数再比点数、同点真牌压制含癞子的同点炸弹。
+export function gdyCanBeatHand(cards, lastPlay) {
+  if (!lastPlay) return true;
+  const jokers = cards.filter(isGdyJoker).length;
+  const counts = {};
+  for (const card of cards) {
+    if (!isGdyJoker(card)) {
+      const value = gdyRankValue(card);
+      counts[value] = (counts[value] ?? 0) + 1;
+    }
+  }
+  // 组成 need 张同点炸弹（真实牌 + 癞子补足）
+  const fitsBomb = (rank, need) => (counts[rank] ?? 0) + jokers >= need;
+
+  if (lastPlay.type === GDY_PLAY_TYPE.BOMB) {
+    // 同点数仅当真牌完全压制（上家含癞子而我有足量真牌）
+    if (lastPlay.wilds > 0 && (counts[lastPlay.rank] ?? 0) >= lastPlay.size) return true;
+    for (let rank = lastPlay.rank + 1; rank <= 15; rank += 1) {
+      if (fitsBomb(rank, lastPlay.size)) return true;
+    }
+    // 三张炸还能被任意四张炸接
+    if (lastPlay.size === 3) {
+      for (let rank = 3; rank <= 15; rank += 1) {
+        if (fitsBomb(rank, 4)) return true;
+      }
+    }
+    return false;
+  }
+
+  // 同型紧邻大一号
+  const nextRank = lastPlay.rank + 1;
+  switch (lastPlay.type) {
+    case GDY_PLAY_TYPE.SINGLE:
+      if (nextRank <= 15 && (counts[nextRank] ?? 0) >= 1) return true;
+      if (lastPlay.rank < 15 && (counts[15] ?? 0) >= 1) return true; // 2 通吃单张
+      break;
+    case GDY_PLAY_TYPE.PAIR: {
+      const pairFits = (rank) => (counts[rank] ?? 0) >= 1 && (counts[rank] ?? 0) + jokers >= 2;
+      if (nextRank <= 15 && pairFits(nextRank)) return true;
+      if (lastPlay.rank < 15 && pairFits(15)) return true; // 对 2 通吃
+      break;
+    }
+    case GDY_PLAY_TYPE.STRAIGHT: {
+      const hi = nextRank;
+      if (hi <= 14) {
+        let deficit = 0;
+        for (let value = hi - lastPlay.size + 1; value <= hi; value += 1) {
+          deficit += Math.max(0, 1 - (counts[value] ?? 0));
+        }
+        if (deficit <= jokers) return true;
+      }
+      break;
+    }
+    case GDY_PLAY_TYPE.PAIRS: {
+      const hi = nextRank;
+      if (hi <= 14) {
+        let deficit = 0;
+        for (let value = hi - lastPlay.size / 2 + 1; value <= hi; value += 1) {
+          deficit += Math.max(0, 2 - (counts[value] ?? 0));
+        }
+        if (deficit <= jokers) return true;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  // 任何炸弹都能接非炸弹
+  for (let rank = 3; rank <= 15; rank += 1) {
+    if (fitsBomb(rank, 3)) return true;
+  }
+  return false;
+}

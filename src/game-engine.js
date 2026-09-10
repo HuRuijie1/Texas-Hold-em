@@ -161,6 +161,7 @@ function normalizeHand(hand, config) {
 export function hydrateRoom(snapshot) {
   const config = normalizeConfig(snapshot.config);
   return {
+    gameType: 'texas',
     code: snapshot.code,
     name: snapshot.name || `牌桌 ${snapshot.code}`,
     createdAt: Number(snapshot.createdAt ?? now()),
@@ -882,8 +883,9 @@ export class GameManager {
     this.rooms = new Map();
 
     for (const snapshot of this.store.listRooms()) {
-      // 炸金花房间由 ZjhManager 负责恢复
-      if (snapshot.gameType === 'zjh') continue;
+      // 炸金花/干瞪眼房间由各自引擎负责恢复，德州引擎只恢复自己的房间
+      // （此前只跳过 zjh，gdy 快照会被误恢复进德州引擎并抢先占用房间码）
+      if (snapshot.gameType && snapshot.gameType !== 'texas') continue;
       try {
         const room = hydrateRoom(snapshot);
         this.rooms.set(room.code, room);
@@ -925,6 +927,7 @@ export class GameManager {
     const roomConfig = normalizeConfig(config);
     const taken = new Set([...this.rooms.keys(), ...this.occupiedCodes()]);
     const room = {
+      gameType: 'texas',
       code: makeRoomCode(taken),
       name: roomName?.trim() || '私人牌桌',
       createdAt: now(),
@@ -1379,8 +1382,8 @@ export class GameManager {
 
     for (const [code, room] of this.rooms) {
       const hasConnectedPlayer = room.players.some((player) => player.connected);
-      const handRunning = room.hand?.status === 'running';
-      if (hasConnectedPlayer || handRunning || room.updatedAt >= cutoffTime) continue;
+      if (hasConnectedPlayer || room.updatedAt >= cutoffTime) continue;
+      this.onClose(room, { reason: 'cleaned' });
       this.rooms.delete(code);
       this.store.deleteRoom(code);
       cleanedCount++;
@@ -1507,5 +1510,16 @@ export class GameManager {
     this.store.deleteRoom(code);
 
     return { settlements, roomName: room.name, settledAt: Date.now() };
+  }
+
+  // root 管理：强制删除房间（无需房主、允许对局进行中），在线成员会收到 room:closed
+  rootRemoveRoom(code) {
+    const room = this.getRoom(code);
+    if (!room) throw new Error('房间不存在');
+    appendLog(room, 'room', '管理员强制关闭房间');
+    this.onClose(room, { reason: 'admin_removed' });
+    this.rooms.delete(room.code);
+    this.store.deleteRoom(room.code);
+    return { code: room.code, name: room.name };
   }
 }

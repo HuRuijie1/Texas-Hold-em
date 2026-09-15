@@ -577,7 +577,7 @@ export function serializeGdyRoom(room, viewerToken = null) {
         return gdyActionOptions(room, selfPlayer);
       })(),
     } : null,
-    log: [...room.log],
+    log: room.log.slice(-30),
     recentHands: [...room.recentHands],
     viewerToken,
     serverNow: now(),

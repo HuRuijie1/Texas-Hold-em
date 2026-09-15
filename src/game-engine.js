@@ -864,7 +864,7 @@ export function serializeRoom(room, viewerToken = null) {
       playerStreetActions: { ...room.hand.playerStreetActions },
       availableActions: availableActions(room, viewerToken),
     } : null,
-    log: [...room.log],
+    log: room.log.slice(-30),
     recentHands: [...room.recentHands],
     viewerToken,
     // 服务端当前时间：客户端用它计算倒计时剩余量，免疫设备时钟偏移

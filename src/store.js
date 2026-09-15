@@ -44,6 +44,7 @@ export class RoomStore {
       LIMIT ?
     `);
     this.deleteOldRoomsStmt = this.db.prepare('DELETE FROM rooms WHERE updated_at < ?');
+    this.deleteOldHistoryStmt = this.db.prepare('DELETE FROM hand_history WHERE created_at < ?');
   }
 
   saveRoom(room) {
@@ -74,6 +75,10 @@ export class RoomStore {
 
   cleanOldRooms(cutoffTime) {
     this.deleteOldRoomsStmt.run(cutoffTime);
+  }
+
+  cleanOldHistory(cutoffTime) {
+    this.deleteOldHistoryStmt.run(cutoffTime);
   }
 
   close() {

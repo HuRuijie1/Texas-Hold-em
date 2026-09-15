@@ -4,6 +4,12 @@
 
     autoConnect: true,
 
+    // WebSocket 优先：避免升级失败后一直停留在长轮询，导致点按钮要等下一次轮询才响应
+
+    transports: ['websocket', 'polling'],
+
+    tryAllTransports: true,
+
     auth: {
 
       token: localStorage.getItem('poker-token') || '',
@@ -25,6 +31,12 @@
     self: null,
 
     peekCards: false,
+
+    pendingAction: false,
+
+    pendingActionAt: null,
+
+    pendingActionDone: false,
 
     lastHandResults: null,
 
@@ -925,11 +937,25 @@
 
   }
 
+  // 渲染签名记忆：内容未变化时跳过 DOM 重建，减少每次广播的全量重绘开销
+  const renderSignatureCache = {};
+  function shouldRender(key, signature) {
+    if (renderSignatureCache[key] === signature) return false;
+    renderSignatureCache[key] = signature;
+    return true;
+  }
+
   function renderLogs(room) {
 
-    elements.actionLog.innerHTML = '';
-
     const items = [...room.log].slice(-18).reverse();
+
+    const last = items[0];
+
+    const signature = `${room.code}|${items.length}|${last ? `${last.at}|${last.text}` : ''}`;
+
+    if (!shouldRender('logs', signature)) return;
+
+    elements.actionLog.innerHTML = '';
 
     for (const entry of items) {
 
@@ -1716,9 +1742,38 @@
 
   }
 
+  // 性能埋点：统计「点击动作 → 界面更新」耗时（ack=本机确认渲染，push=广播渲染）
+  function recordActionLatency(bucket) {
+
+    if (!state.pendingActionAt || state.pendingActionDone) return;
+
+    const delta = Math.round(performance.now() - state.pendingActionAt);
+
+    const stats = (window.__actionStats = window.__actionStats || { ack: [], push: [] });
+
+    const list = stats[bucket] || (stats[bucket] = []);
+
+    list.push(delta);
+
+    if (list.length > 50) list.shift();
+
+    console.debug(`[perf] action→${bucket} ${delta}ms`);
+
+    if (bucket === 'push') state.pendingActionDone = true;
+
+  }
+
   function sendAction(action) {
 
     if (!state.room) return;
+
+    if (state.pendingAction) return; // 防连点：上一发还没确认前忽略重复点击
+
+    state.pendingAction = true;
+
+    state.pendingActionAt = performance.now();
+
+    state.pendingActionDone = false;
 
     socket.emit('room:action', {
 
@@ -1730,9 +1785,23 @@
 
     }, (result) => {
 
+      state.pendingAction = false;
+
       if (!result?.ok) {
 
         showToast(result?.error || '行动失败', true);
+
+        return;
+
+      }
+
+      // ack 已带最新房间视图：立即渲染，不等下一次广播
+
+      recordActionLatency('ack');
+
+      if (result.room && state.room?.code === result.room.code) {
+
+        renderTable(result.room);
 
       }
 
@@ -1819,6 +1888,24 @@
 
   function renderMembers(room) {
     if (!elements.memberList) return;
+    const signature = JSON.stringify([
+      room.code,
+      room.self?.isHost ?? false,
+      room.summary?.handStatus ?? '',
+      room.players.map((player) => [
+        player.name,
+        player.isHost,
+        player.isBot,
+        player.seatIndex,
+        player.sitOut,
+        player.connected,
+        player.ready,
+        player.stack,
+        player.targetToken ?? null,
+        player.isViewer,
+      ]),
+    ]);
+    if (!shouldRender('members', signature)) return;
     elements.memberList.innerHTML = '';
 
     for (const player of room.players) {
@@ -1975,6 +2062,10 @@
   socket.on('room:state', (room) => {
 
     if (!room) return;
+
+    state.pendingAction = false;
+
+    recordActionLatency('push');
 
     if (room.viewerToken) {
 
@@ -3386,6 +3477,8 @@ nextHandBtn.addEventListener('click', () => {
       state.gdySelected = [];
     }
     state.gdySelected = state.gdySelected.filter((index) => index < cards.length);
+    const handSignature = JSON.stringify([room.code, cards, state.gdySelected, me ? me.seatIndex : null]);
+    if (!shouldRender('gdyHand', handSignature)) return;
     const prevScrollTop = elements.viewerCards.scrollTop;
     elements.viewerCards.innerHTML = '';
     elements.peekCardsBtn.classList.add('hidden');
@@ -3406,6 +3499,8 @@ nextHandBtn.addEventListener('click', () => {
 
   // 上家出的牌显示到牌桌中央，方便观察和接牌
   function renderGdyBoard(room) {
+    const boardSignature = JSON.stringify([room.code, room.hand?.status ?? '', room.hand?.lastPlay ?? null]);
+    if (!shouldRender('gdyBoard', boardSignature)) return;
     elements.board.innerHTML = '';
     const lastPlay = room.hand?.lastPlay;
     if (!lastPlay) {
@@ -3432,6 +3527,28 @@ nextHandBtn.addEventListener('click', () => {
   }
 
   function renderGdySeats(room) {
+    const streetActionsForSig = room.hand?.playerStreetActions ?? {};
+    const seatSignature = JSON.stringify([
+      room.code,
+      room.config.maxSeats,
+      room.self?.isHost ?? false,
+      room.hand?.status ?? '',
+      room.hand?.turnSeat ?? null,
+      room.hand?.dealerSeat ?? null,
+      room.hand?.winners ?? [],
+      room.players.map((player) => [
+        player.seatIndex,
+        player.name,
+        player.stack,
+        player.cardCount,
+        player.isViewer,
+        player.targetToken ?? null,
+        gdySeatTags(room, player),
+        streetActionsForSig[player.seatIndex] ?? null,
+        room.hand?.status === 'finished' ? (player.holeCards ?? []) : null,
+      ]),
+    ]);
+    if (!shouldRender('gdySeats', seatSignature)) return;
     elements.seatGrid.innerHTML = '';
 
     const seats = Array.from({ length: room.config.maxSeats }, (_, index) => ({
@@ -3534,9 +3651,14 @@ nextHandBtn.addEventListener('click', () => {
   }
 
   function renderGdyActions(room) {
-    elements.actionPanel.innerHTML = '';
     state.turnDeadlineAt = room.hand?.status === 'running' ? (room.hand.turnDeadlineAt ?? null) : null;
     const actions = room.hand?.availableActions;
+    const actionSignature = JSON.stringify([room.code, room.hand?.status ?? '', room.hand?.turnDeadlineAt ?? null, actions ?? null]);
+    if (!shouldRender('gdyActions', actionSignature)) {
+      updateTurnCountdown();
+      return;
+    }
+    elements.actionPanel.innerHTML = '';
 
     if (!actions) {
       const hint = document.createElement('div');

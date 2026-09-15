@@ -441,7 +441,7 @@ function coreDecide(room, player, actions) {
 
   // 高级/中级 AI 叠加蒙特卡洛权益；面对加注时收紧对手范围
   if (level !== 'beginner') {
-    const samples = level === 'advanced' ? 120 : 48;
+    const samples = level === 'advanced' ? 60 : 24;
     const oppCutoff = ctx.facingRaise ? (ctx.pressure > 0.4 ? 0.58 : 0.52) : 0;
     const equity = estimateEquity(room, player, { samples, oppCutoff });
     const weight = level === 'advanced' ? 0.55 : 0.35;

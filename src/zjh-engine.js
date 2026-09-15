@@ -698,7 +698,7 @@ export function serializeZjhRoom(room, viewerToken = null) {
         return zjhActionOptions(room, viewer);
       })(),
     } : null,
-    log: [...room.log],
+    log: room.log.slice(-30),
     recentHands: [...room.recentHands],
     viewerToken,
     serverNow: now(),

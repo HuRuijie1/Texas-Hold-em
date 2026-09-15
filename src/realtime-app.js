@@ -7,6 +7,12 @@ import { GdyManager, GDY_DEFAULT_CONFIG } from './gdy-engine.js';
 import { RoomStore } from './store.js';
 
 export function createRealtimeApp({ store = new RoomStore() } = {}) {
+  // 启动时清理 30 天前的牌局历史，防止 hand_history 无限膨胀拖慢写库
+  try {
+    store.cleanOldHistory?.(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  } catch {
+    // 历史清理失败不阻塞启动
+  }
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   // no-cache：每次协商缓存（内容未变返回 304），避免移动端 WebView 长期使用旧版页面/脚本
@@ -93,9 +99,24 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     return [...gameManager.listRooms(), ...zjhManager.listRooms(), ...gdyManager.listRooms()];
   }
 
-  function emitRoomsList() {
+  let roomsListTimer = null;
+
+  function emitRoomsListNow() {
     if (!io) return;
+    if (roomsListTimer) {
+      clearTimeout(roomsListTimer);
+      roomsListTimer = null;
+    }
     io.emit('rooms:list', { rooms: mergedRooms() });
+  }
+
+  // 动作路径的全服房间列表广播做 500ms 合并：机器人房每秒一手时避免持续轰炸所有客户端
+  function emitRoomsList() {
+    if (!io || roomsListTimer) return;
+    roomsListTimer = setTimeout(() => {
+      roomsListTimer = null;
+      emitRoomsListNow();
+    }, 500);
   }
 
   // 按房间码定位所属 manager
@@ -151,7 +172,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     }
     try {
       const removed = manager.rootRemoveRoom(req.body.code);
-      emitRoomsList();
+      emitRoomsListNow();
       res.json({ ok: true, ...removed });
     } catch (error) {
       res.status(400).json({ error: error.message });

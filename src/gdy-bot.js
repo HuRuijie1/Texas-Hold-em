@@ -1,7 +1,7 @@
 import {
   describeGdyPlay,
   evaluateGdyPlay,
-  gdyBeats,
+  gdyPlaysBeat,
   gdyRankValue,
   isGdyJoker,
 } from './gdy.js';
@@ -11,12 +11,13 @@ import {
 // - 自由出牌：能一次出完直接赢；否则优先出非炸弹中"最大点数最小"的组合（留 2/炸弹控场），
 //   同点数优先出张数更多的；实在没有非炸弹才出炸弹
 // - 跟牌：出能压过的最小组合（优先非炸弹）；接不上就过
-// - 癞子参与组合按 evaluateGdyPlay 的最有利解释
+// - 癞子取点浮动：出牌只定牌组，能压过上家任一解释即可（与引擎校验口径一致）
 
 const rand = (min, max) => min + Math.floor(Math.random() * (max - min + 1));
 
 // 枚举手牌所有可出的组合，返回 [{ cards, play }]
-export function enumerateGdyPlays(cards) {
+// 跟牌时传入 lastPlay 记录 { play, cards }：癞子组合优先按"恰好压过上家"的窗口解释
+export function enumerateGdyPlays(cards, lastPlay = null) {
   const jokers = cards.filter(isGdyJoker);
   const byRank = new Map();
   for (const card of cards) {
@@ -26,9 +27,15 @@ export function enumerateGdyPlays(cards) {
     byRank.get(value).push(card);
   }
   const results = [];
+  const seen = new Set();
   const add = (picked) => {
-    const play = evaluateGdyPlay(picked);
-    if (play) results.push({ cards: picked, play });
+    const play = evaluateGdyPlay(picked, lastPlay);
+    if (!play) return;
+    // 同一组牌只会得到同一种解释，去重避免重复候选
+    const key = [...picked].sort().join(' ');
+    if (seen.has(key)) return;
+    seen.add(key);
+    results.push({ cards: picked, play });
   };
 
   // 单张
@@ -90,11 +97,12 @@ export function enumerateGdyPlays(cards) {
 export function decideGdyBotTurn(room, player) {
   const hand = player.holeCards;
   const lastPlay = room.hand.lastPlay;
-  const candidates = enumerateGdyPlays(hand);
+  const candidates = enumerateGdyPlays(hand, lastPlay ?? null);
 
-  // 跟牌时只有能压过上家的组合才可出（"一次出完"也必须先过这一关）
+  // 跟牌时只有能压过上家的组合才可出（"一次出完"也必须先过这一关）；
+  // 上家含癞子时取点浮动，能压其任一解释即可
   const playable = lastPlay
-    ? candidates.filter((entry) => gdyBeats(entry.play, lastPlay.play))
+    ? candidates.filter((entry) => gdyPlaysBeat(entry.cards, lastPlay.cards))
     : candidates;
   if (lastPlay && playable.length === 0) {
     return { action: { type: 'pass' }, delayMs: rand(400, 900) };
@@ -126,12 +134,12 @@ export function decideGdyBotTurn(room, player) {
   return { action: { type: 'play', cards: choice.cards }, delayMs: rand(600, 1400) };
 }
 
-// 机器人日志描述（用于行动日志）
-export function describeGdyBotAction(action) {
+// 机器人日志描述（用于行动日志）；跟牌时带上上家以正确解释癞子取点
+export function describeGdyBotAction(action, lastPlay = null) {
   if (!action) return '';
   if (action.type === 'pass') return '选择过牌';
   if (action.type === 'play') {
-    const play = evaluateGdyPlay(action.cards);
+    const play = evaluateGdyPlay(action.cards, lastPlay);
     return play ? `打出 ${describeGdyPlay(play)}` : '出牌';
   }
   return action.type;

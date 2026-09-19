@@ -8,6 +8,7 @@ import {
   formatGdyCards,
   gdyBeats,
   gdyCanBeatHand,
+  gdyPlaysBeat,
 } from '../src/gdy.js';
 import { GdyManager, GDY_DEFAULT_CONFIG } from '../src/gdy-engine.js';
 import { createRealtimeApp } from '../src/realtime-app.js';
@@ -104,6 +105,66 @@ test('顺子：3 张起、最大到 A、2 不入顺、癞子补缺', () => {
 
   // 间隔过大癞子补不上
   assert.equal(evaluateGdyPlay(['3H', '6S', 'RJ']), null);
+});
+
+test('顺子癞子取点：自由出牌取最高窗口，跟牌取恰好压上的窗口', () => {
+  // 回归：6,7 + 王 曾被锚成 567（王=5），自由出牌应是 678（王=8）
+  const free = evaluateGdyPlay(['6H', '7S', 'RJ']);
+  assert.equal(free.type, GDY_PLAY_TYPE.STRAIGHT);
+  assert.equal(free.rank, 8);
+  // 取点浮动：lo/hi 为可取窗口的跨度（567 或 678）
+  assert.equal(free.lo, 5);
+  assert.equal(free.hi, 8);
+
+  const last = evaluateGdyPlay(['5H', '6S', '7D']);
+  // 跟牌：67王 以 678 压过 567
+  const follow = evaluateGdyPlay(['6H', '7S', 'RJ'], last);
+  assert.equal(follow.rank, 8);
+  assert.ok(gdyBeats(follow, last));
+  assert.ok(gdyPlaysBeat(['6H', '7S', 'RJ'], ['5H', '6S', '7D']));
+
+  // 跟牌：7,8 + 王 以 678 压过 567（癞子取低位 6）
+  assert.ok(gdyPlaysBeat(['7H', '8S', 'RJ'], ['5H', '6S', '7D']));
+
+  // 压不上时回落到最高窗口（由校验层拒绝）
+  const noBeat = evaluateGdyPlay(['5H', '6S', '7D'], last);
+  assert.equal(noBeat.hi, 7);
+  assert.ok(!gdyPlaysBeat(['5H', '6S', '7D'], ['5H', '6S', '7D']));
+
+  // 连对跟牌：4,4,5 + 王 按 4455 压过 3344（同张数紧邻大一号）
+  const pairsLast = evaluateGdyPlay(['3H', '3S', '4D', '4C']);
+  const pairsFollow = evaluateGdyPlay(['4H', '4S', '5D', 'RJ'], pairsLast);
+  assert.equal(pairsFollow.type, GDY_PLAY_TYPE.PAIRS);
+  assert.equal(pairsFollow.lo, 4);
+  assert.equal(pairsFollow.hi, 5);
+  assert.ok(gdyBeats(pairsFollow, pairsLast));
+
+  // 连对自由出牌：4455+双王 可取 334455 或 445566，跨度 3~6
+  const pairsFree = evaluateGdyPlay(['4H', '4S', '5D', '5C', 'RJ', 'BJ']);
+  assert.equal(pairsFree.lo, 3);
+  assert.equal(pairsFree.hi, 6);
+});
+
+test('癞子取点浮动：56王 可被 567 或 678 接（出牌只定牌组、不定取点）', () => {
+  const last = evaluateGdyPlay(['5H', '6S', 'RJ']); // 56王：可作 456 或 567
+  assert.equal(last.type, GDY_PLAY_TYPE.STRAIGHT);
+  assert.equal(last.lo, 4);
+  assert.equal(last.hi, 7);
+
+  // 下家 567 吃（压上家的 456 解释）；678 也吃（压 567 解释）；456 吃不了
+  assert.ok(gdyPlaysBeat(['5C', '6D', '7H'], ['5H', '6S', 'RJ']));
+  assert.ok(gdyPlaysBeat(['6H', '7S', '8D'], ['5H', '6S', 'RJ']));
+  assert.ok(!gdyPlaysBeat(['4H', '5S', '6D'], ['5H', '6S', 'RJ']));
+  // 我方癞子同样浮动：7,8,王 以 678 压上家的 567 解释
+  assert.ok(gdyPlaysBeat(['7H', '8S', 'RJ'], ['5H', '6S', 'RJ']));
+  // 上家 6,7,王（567/678）：下家 789 可接；567 接不了
+  assert.ok(gdyPlaysBeat(['7H', '8S', '9D'], ['6H', '7S', 'RJ']));
+  assert.ok(!gdyPlaysBeat(['5H', '6S', '7D'], ['6H', '7S', 'RJ']));
+
+  // 吃不起判定同步：567 / 678 都算能接，456 算吃不起
+  assert.ok(gdyCanBeatHand(['5C', '6D', '7H'], last, ['5H', '6S', 'RJ']));
+  assert.ok(gdyCanBeatHand(['6H', '7S', '8D'], last, ['5H', '6S', 'RJ']));
+  assert.ok(!gdyCanBeatHand(['4H', '5S', '6D'], last, ['5H', '6S', 'RJ']));
 });
 
 test('连对：2 对起、癞子可补半对或自组一对、2 不入连对', () => {
@@ -332,6 +393,22 @@ test('机器人决策：能赢直接出完、接牌出最小的、接不上过�
   const bomb = decideGdyBotTurn(mkRoom({ seatIndex: 0, play: evaluateGdyPlay(['2H']), cards: ['2H'] }), { holeCards: ['7H', '7S', '7D'] });
   assert.equal(bomb.action.type, 'play');
   assert.equal(bomb.action.cards.length, 3);
+
+  // 回归：跟 567 时手里 6,7,王 应以 678 接上（曾因癞子窗口锚死最低被解释成 567 而误判过牌）
+  const straightFollow = decideGdyBotTurn(
+    mkRoom({ seatIndex: 0, play: evaluateGdyPlay(['5H', '6S', '7D']), cards: ['5H', '6S', '7D'] }),
+    { holeCards: ['6H', '7S', 'RJ', 'KH'] },
+  );
+  assert.equal(straightFollow.action.type, 'play');
+  assert.deepEqual(straightFollow.action.cards, ['6H', '7S', 'RJ']);
+
+  // 癞子取点浮动：上家 56王（456/567），下家真实 567 压其 456 解释
+  const floatFollow = decideGdyBotTurn(
+    mkRoom({ seatIndex: 0, play: evaluateGdyPlay(['5H', '6S', 'RJ']), cards: ['5H', '6S', 'RJ'] }),
+    { holeCards: ['5C', '6D', '7H', 'KH'] },
+  );
+  assert.equal(floatFollow.action.type, 'play');
+  assert.deepEqual(floatFollow.action.cards, ['5C', '6D', '7H']);
 });
 
 // ===== 引擎流程 =====
@@ -425,6 +502,55 @@ test('对局流程：炸弹倍率、一圈全过后重获出牌权、先出完�
   assert.equal(playerBySeat(room, dealerSeat).stack, GDY_DEFAULT_CONFIG.startingStack - 2);
   // 上局赢家连庄
   assert.equal(room.dealerSeat, otherSeat);
+});
+
+test('跟牌修复：67王 能以 678 压过 567（引擎校验层回归）', () => {
+  const { manager, code } = makeRoom();
+  manager.toggleReady(code, 't1');
+  manager.toggleReady(code, 't2');
+  const room = manager.getRoom(code);
+  const dealerSeat = room.hand.dealerSeat;
+  const otherSeat = dealerSeat === 0 ? 1 : 0;
+  room.hand.deck = [];
+  room.hand.deckIndex = 0;
+  playerBySeat(room, dealerSeat).holeCards = ['5H', '6S', '7D', '9H', '9S', '2H'];
+  playerBySeat(room, otherSeat).holeCards = ['6H', '7S', 'RJ', '3H', '4D'];
+
+  const dealer = dealerSeat === 0 ? 't1' : 't2';
+  const other = dealerSeat === 0 ? 't2' : 't1';
+
+  // 庄家出 567
+  manager.applyAction(code, dealer, { type: 'play', cards: ['5H', '6S', '7D'] });
+  assert.equal(room.hand.lastPlay.play.rank, 7);
+  // 闲家 6,7,王 按 678 压过（修复前被解释成 567 而误报"压不过上家的牌"）
+  manager.applyAction(code, other, { type: 'play', cards: ['6H', '7S', 'RJ'] });
+  assert.equal(room.hand.lastPlay.play.lo, 5);
+  assert.equal(room.hand.lastPlay.play.hi, 8);
+});
+
+test('癞子浮动跟牌：上家 56王，下家 567/678 都能接（引擎校验层）', () => {
+  const { manager, code } = makeRoom();
+  manager.toggleReady(code, 't1');
+  manager.toggleReady(code, 't2');
+  const room = manager.getRoom(code);
+  const dealerSeat = room.hand.dealerSeat;
+  const otherSeat = dealerSeat === 0 ? 1 : 0;
+  room.hand.deck = [];
+  room.hand.deckIndex = 0;
+  playerBySeat(room, dealerSeat).holeCards = ['5H', '6S', 'RJ', '9H', '9S', '2H'];
+  playerBySeat(room, otherSeat).holeCards = ['5C', '6D', '7H', '3H', '4D'];
+
+  const dealer = dealerSeat === 0 ? 't1' : 't2';
+  const other = dealerSeat === 0 ? 't2' : 't1';
+
+  // 庄家自由出 56王（取点浮动：456 或 567，跨度 4~7）
+  manager.applyAction(code, dealer, { type: 'play', cards: ['5H', '6S', 'RJ'] });
+  assert.equal(room.hand.lastPlay.play.lo, 4);
+  assert.equal(room.hand.lastPlay.play.hi, 7);
+  // 闲家真实 567 压其 456 解释
+  manager.applyAction(code, other, { type: 'play', cards: ['5C', '6D', '7H'] });
+  assert.equal(room.hand.lastPlay.cards.length, 3);
+  assert.equal(room.hand.turnSeat, dealerSeat);
 });
 
 test('被通关：输家结束时剩 5 张，个人扣分翻倍', () => {

@@ -5,8 +5,8 @@ import {
   describeGdyPlay,
   evaluateGdyPlay,
   formatGdyCards,
-  gdyBeats,
   gdyCanBeatHand,
+  gdyPlaysBeat,
   gdyRankValue,
   isGdyJoker,
 } from './gdy.js';
@@ -252,7 +252,7 @@ function removeCardsFromHand(player, cards) {
 // 该玩家的行动时限：跟牌但吃不起 → quickPassMs（到点自动过），其余正常时限
 function turnDeadlineFor(room, player) {
   const hand = room.hand;
-  if (hand.lastPlay && !gdyCanBeatHand(player.holeCards, hand.lastPlay.play)) {
+  if (hand.lastPlay && !gdyCanBeatHand(player.holeCards, hand.lastPlay.play, hand.lastPlay.cards)) {
     return now() + room.config.quickPassMs;
   }
   return now() + room.config.actionTimeoutMs;
@@ -391,9 +391,10 @@ function applyGdyPlayerAction(room, player, action, store) {
     const cards = action?.cards;
     if (!Array.isArray(cards) || cards.length === 0) throw new Error('请选择要出的牌');
     if (new Set(cards).size !== cards.length) throw new Error('所选的牌有重复');
-    const play = evaluateGdyPlay(cards);
+    // 跟牌时传入上家记录：癞子取点浮动（上家 56王 可被 567/678 接，我方癞子也优先取恰好压上的点）
+    const play = evaluateGdyPlay(cards, hand.lastPlay);
     if (!play) throw new Error('所选的牌不构成有效牌型');
-    if (hand.lastPlay && !gdyBeats(play, hand.lastPlay.play)) throw new Error('压不过上家的牌');
+    if (hand.lastPlay && !gdyPlaysBeat(cards, hand.lastPlay.cards)) throw new Error('压不过上家的牌');
     if (!removeCardsFromHand(player, cards)) throw new Error('手牌不包含所选的牌');
 
     if (play.type === GDY_PLAY_TYPE.BOMB) {
@@ -423,7 +424,7 @@ function applyGdyPlayerAction(room, player, action, store) {
 
 export function gdyActionOptions(room, player) {
   const lastPlay = room.hand.lastPlay;
-  const canBeat = gdyCanBeatHand(player.holeCards, lastPlay?.play ?? null);
+  const canBeat = gdyCanBeatHand(player.holeCards, lastPlay?.play ?? null, lastPlay?.cards ?? null);
   return {
     freePlay: lastPlay == null,
     mustPlay: lastPlay == null,

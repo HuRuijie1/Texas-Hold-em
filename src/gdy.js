@@ -80,49 +80,91 @@ function ranksInRange(values) {
 }
 
 // 顺子：n（>=3）张点数连续的单牌；真实牌不得重复、不得含 2，
-// 癞子补在窗口内缺失的点数上。返回最高可成的窗口。
-function evaluateStraight(values, wilds, size) {
-  if (values.length !== new Set(values).size) return null;
-  if (!ranksInRange(values) || size > RUN_MAX - RUN_MIN + 1) return null;
-  const min = values.length ? Math.min(...values) : RUN_MIN;
-  const max = values.length ? Math.max(...values) : RUN_MAX;
-  const lo = Math.max(RUN_MIN, max - size + 1);
-  if (lo > min) return null;
-  const hi = lo + size - 1;
-  if (hi > RUN_MAX) return null;
+// 癞子补在窗口内缺失的点数上。返回所有放得下的窗口（升序）。
+function straightWindows(values, wilds, size) {
+  if (values.length !== new Set(values).size) return [];
+  if (!ranksInRange(values) || size > RUN_MAX - RUN_MIN + 1) return [];
   // 窗口 [lo, hi] 内真实牌占据的点数，其余由癞子补齐，数量必须恰好相等
   const missing = size - values.length;
-  if (missing !== wilds) return null;
-  return { lo, hi };
+  if (missing !== wilds) return [];
+  const min = values.length ? Math.min(...values) : RUN_MIN;
+  const max = values.length ? Math.max(...values) : RUN_MAX;
+  const loLow = Math.max(RUN_MIN, max - size + 1);
+  const loHigh = Math.min(min, RUN_MAX - size + 1);
+  const windows = [];
+  for (let lo = loLow; lo <= loHigh; lo += 1) windows.push({ lo, hi: lo + size - 1 });
+  return windows;
 }
 
-// 连对：偶数张（>=4），每点恰好一对，点数连续；癞子既可补足半对，也可自组一对
-function evaluatePairs(counts, wilds, size) {
-  const pairCount = size / 2;
-  if (size % 2 !== 0 || pairCount > RUN_MAX - RUN_MIN + 1) return null;
-  if (Object.values(counts).some((count) => count > 2)) return null;
-  const used = Object.keys(counts).map(Number);
-  if (!ranksInRange(used)) return null;
-  // 从高位窗口向低尝试，取对出牌者最有利（最大）的窗口
-  for (let lo = RUN_MAX - pairCount + 1; lo >= RUN_MIN; lo -= 1) {
-    const hi = lo + pairCount - 1;
-    let need = 0;
-    let ok = true;
-    for (let value = lo; value <= hi; value += 1) {
-      const count = counts[value] ?? 0;
-      if (count > 2) { ok = false; break; }
-      need += 2 - count;
-    }
-    if (!ok) continue;
-    if (used.some((value) => value < lo || value > hi)) continue;
-    if (need === wilds) return { lo, hi };
+// 连对：偶数张（>=4），每点恰好一对，点数连续；癞子既可补足半对，也可自组一对。
+// 返回所有放得下的窗口（降序，高位在前）。
+function pairsWindowAt(counts, wilds, pairCount, lo, used) {
+  const hi = lo + pairCount - 1;
+  if (lo < RUN_MIN || hi > RUN_MAX) return null;
+  let need = 0;
+  for (let value = lo; value <= hi; value += 1) {
+    const count = counts[value] ?? 0;
+    if (count > 2) return null;
+    need += 2 - count;
   }
-  return null;
+  if (used.some((value) => value < lo || value > hi)) return null;
+  return need === wilds ? { lo, hi } : null;
+}
+
+function pairsWindows(counts, wilds, size) {
+  const pairCount = size / 2;
+  if (size % 2 !== 0 || pairCount > RUN_MAX - RUN_MIN + 1) return [];
+  if (Object.values(counts).some((count) => count > 2)) return [];
+  const used = Object.keys(counts).map(Number);
+  if (!ranksInRange(used)) return [];
+  const windows = [];
+  for (let lo = RUN_MAX - pairCount + 1; lo >= RUN_MIN; lo -= 1) {
+    const run = pairsWindowAt(counts, wilds, pairCount, lo, used);
+    if (run) windows.push(run);
+  }
+  return windows;
+}
+
+// 解析上家参数：可传 lastPlay 记录 { play, cards }，也可直接传单个 play
+function resolveLastPlay(lastPlay) {
+  if (!lastPlay) return { play: null, cards: null };
+  if (Array.isArray(lastPlay.cards)) return { play: lastPlay.play ?? null, cards: lastPlay.cards };
+  return { play: lastPlay, cards: null };
+}
+
+// 跟牌目标最高点集合：上家该牌型全部解释的最高点 +1（降序）。
+// 上家含癞子时取点浮动（如 56王 = 456/567），目标即 567 或 678。
+function followTargetHis(lastInfo, type) {
+  const play = lastInfo.play;
+  if (!play || play.type !== type) return [];
+  let interps = [play];
+  if (lastInfo.cards) {
+    interps = gdyPlayInterpretations(lastInfo.cards).filter((item) => item.type === type);
+  }
+  return [...new Set(interps.map((item) => item.hi + 1))]
+    .filter((hi) => hi <= RUN_MAX)
+    .sort((a, b) => b - a);
+}
+
+// 从候选窗口中取牌：优先命中跟牌目标（恰好压上），否则取最高窗口
+function pickWindow(windows, targetHis) {
+  if (!windows.length) return null;
+  for (const targetHi of targetHis) {
+    const hit = windows.find((window) => window.hi === targetHi);
+    if (hit) return hit;
+  }
+  let best = windows[0];
+  for (const window of windows) {
+    if (window.hi > best.hi) best = window;
+  }
+  return best;
 }
 
 // 评估一组牌构成的最佳牌型（癞子自动按最有利方式取点）；
+// 跟牌时 lastPlay 可传 { play, cards } 记录或单个 play：癞子优先取"恰好压过上家"的窗口。
+// 含癞子的顺子/连对取点浮动：返回的 lo/hi 为全部可取窗口的整体跨度，rank 取最高解释。
 // 无效组合返回 null。返回 { type, size, rank, wilds, lo, hi }。
-export function evaluateGdyPlay(cards) {
+export function evaluateGdyPlay(cards, lastPlay = null) {
   if (!Array.isArray(cards) || cards.length === 0) return null;
   if (new Set(cards).size !== cards.length) return null;
 
@@ -130,6 +172,7 @@ export function evaluateGdyPlay(cards) {
   const reals = cards.filter((card) => !isGdyJoker(card));
   const values = realRanks(reals);
   const size = cards.length;
+  const lastInfo = resolveLastPlay(lastPlay);
 
   // 单张：不能出癞子
   if (size === 1) {
@@ -137,7 +180,7 @@ export function evaluateGdyPlay(cards) {
     return { type: GDY_PLAY_TYPE.SINGLE, size: 1, rank: values[0], wilds: 0, lo: values[0], hi: values[0] };
   }
 
-  // 炸弹：三张或四张同点（可含癞子），优先级高于顺子等其他解释
+  // 炸弹：三张或四张同点（可含癞子），优先级高于顺子/连对等其他解释
   if ((size === 3 || size === 4) && values.length > 0 && values.every((value) => value === values[0])) {
     return { type: GDY_PLAY_TYPE.BOMB, size, rank: values[0], wilds, lo: values[0], hi: values[0] };
   }
@@ -157,17 +200,30 @@ export function evaluateGdyPlay(cards) {
   const counts = {};
   for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
 
-  if (size % 2 === 0) {
-    const run = evaluatePairs(counts, wilds, size);
-    if (run) {
-      return { type: GDY_PLAY_TYPE.PAIRS, size, rank: run.hi, wilds, lo: run.lo, hi: run.hi };
+  // 含癞子时取点浮动：lo/hi 返回全部可取窗口的整体跨度
+  const spanned = (type, chosen, windows) => {
+    if (wilds > 0 && windows.length > 1) {
+      return {
+        type,
+        size,
+        rank: chosen.hi,
+        wilds,
+        lo: Math.min(...windows.map((item) => item.lo)),
+        hi: Math.max(...windows.map((item) => item.hi)),
+      };
     }
+    return { type, size, rank: chosen.hi, wilds, lo: chosen.lo, hi: chosen.hi };
+  };
+
+  if (size % 2 === 0) {
+    const pairWindows = pairsWindows(counts, wilds, size);
+    const run = pickWindow(pairWindows, followTargetHis(lastInfo, GDY_PLAY_TYPE.PAIRS));
+    if (run) return spanned(GDY_PLAY_TYPE.PAIRS, run, pairWindows);
   }
 
-  const straight = evaluateStraight(values, wilds, size);
-  if (straight) {
-    return { type: GDY_PLAY_TYPE.STRAIGHT, size, rank: straight.hi, wilds, lo: straight.lo, hi: straight.hi };
-  }
+  const runs = straightWindows(values, wilds, size);
+  const straight = pickWindow(runs, followTargetHis(lastInfo, GDY_PLAY_TYPE.STRAIGHT));
+  if (straight) return spanned(GDY_PLAY_TYPE.STRAIGHT, straight, runs);
 
   return null;
 }
@@ -188,6 +244,63 @@ export function gdyBeats(a, b) {
   if (a.type !== b.type || a.size !== b.size) return false;
   if (a.rank === 15) return b.rank < 15; // 单2/对2 通吃，但吃不掉同点数的 2
   return a.rank === b.rank + 1;
+}
+
+// 一组牌的全部合法解释：癞子顺子/连对可有多个取点窗口（56王 = 456/567），
+// 偶数张可能同时存在连对与顺子解释；炸弹/单张/对子的解释唯一。
+export function gdyPlayInterpretations(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) return [];
+  if (new Set(cards).size !== cards.length) return [];
+  const wilds = cards.filter(isGdyJoker).length;
+  const reals = cards.filter((card) => !isGdyJoker(card));
+  const values = realRanks(reals);
+  const size = cards.length;
+
+  if (size === 1) {
+    if (wilds > 0) return [];
+    return [{ type: GDY_PLAY_TYPE.SINGLE, size: 1, rank: values[0], wilds: 0, lo: values[0], hi: values[0] }];
+  }
+  // 炸弹优先且解释唯一（王只补同点，不浮动）
+  if ((size === 3 || size === 4) && values.length > 0 && values.every((value) => value === values[0])) {
+    return [{ type: GDY_PLAY_TYPE.BOMB, size, rank: values[0], wilds, lo: values[0], hi: values[0] }];
+  }
+  if (size === 2) {
+    if (reals.length === 2) {
+      if (values[0] !== values[1]) return [];
+      return [{ type: GDY_PLAY_TYPE.PAIR, size: 2, rank: values[0], wilds: 0, lo: values[0], hi: values[0] }];
+    }
+    if (reals.length === 1) {
+      return [{ type: GDY_PLAY_TYPE.PAIR, size: 2, rank: values[0], wilds: 1, lo: values[0], hi: values[0] }];
+    }
+    return [];
+  }
+
+  const counts = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+
+  const results = [];
+  if (size % 2 === 0) {
+    for (const window of pairsWindows(counts, wilds, size)) {
+      results.push({ type: GDY_PLAY_TYPE.PAIRS, size, rank: window.hi, wilds, lo: window.lo, hi: window.hi });
+    }
+  }
+  for (const window of straightWindows(values, wilds, size)) {
+    results.push({ type: GDY_PLAY_TYPE.STRAIGHT, size, rank: window.hi, wilds, lo: window.lo, hi: window.hi });
+  }
+  return results;
+}
+
+// 癞子取点浮动规则：出牌只确定牌组、不确定取点（如 56王 可视作 456 或 567）。
+// 只要我方存在一个解释能压过上家的任意一个解释，即可接牌；
+// 双方都不含癞子时与 gdyBeats 等价。
+export function gdyPlaysBeat(myCards, lastPlayCards) {
+  if (!Array.isArray(myCards) || !Array.isArray(lastPlayCards)) return false;
+  for (const mine of gdyPlayInterpretations(myCards)) {
+    for (const theirs of gdyPlayInterpretations(lastPlayCards)) {
+      if (gdyBeats(mine, theirs)) return true;
+    }
+  }
+  return false;
 }
 
 // 中文描述：如 "炸弹 555"、"顺子 6~8"、"连对 55~77"、"对 K"、"单张 2"
@@ -218,38 +331,8 @@ export function describeGdyPlay(play) {
   }
 }
 
-// 判断手牌中是否至少存在一种组合能接掉 lastPlay（用于"吃不起 3 秒自动过"）。
-// 判定口径与 gdyBeats 完全一致：非炸弹同型顺移一号（单张/对子另加 2 通吃），
-// 炸弹吃一切非炸弹、炸弹之间先比张数再比点数、同点真牌压制含癞子的同点炸弹。
-export function gdyCanBeatHand(cards, lastPlay) {
-  if (!lastPlay) return true;
-  const jokers = cards.filter(isGdyJoker).length;
-  const counts = {};
-  for (const card of cards) {
-    if (!isGdyJoker(card)) {
-      const value = gdyRankValue(card);
-      counts[value] = (counts[value] ?? 0) + 1;
-    }
-  }
-  // 组成 need 张同点炸弹（真实牌 + 癞子补足）
-  const fitsBomb = (rank, need) => (counts[rank] ?? 0) + jokers >= need;
-
-  if (lastPlay.type === GDY_PLAY_TYPE.BOMB) {
-    // 同点数仅当真牌完全压制（上家含癞子而我有足量真牌）
-    if (lastPlay.wilds > 0 && (counts[lastPlay.rank] ?? 0) >= lastPlay.size) return true;
-    for (let rank = lastPlay.rank + 1; rank <= 15; rank += 1) {
-      if (fitsBomb(rank, lastPlay.size)) return true;
-    }
-    // 三张炸还能被任意四张炸接
-    if (lastPlay.size === 3) {
-      for (let rank = 3; rank <= 15; rank += 1) {
-        if (fitsBomb(rank, 4)) return true;
-      }
-    }
-    return false;
-  }
-
-  // 同型紧邻大一号
+// 针对单个固定解释的"能否接上"判定（同型紧邻大一号，单张/对子另加 2 通吃）
+function canBeatFixedPlay(counts, jokers, lastPlay) {
   const nextRank = lastPlay.rank + 1;
   switch (lastPlay.type) {
     case GDY_PLAY_TYPE.SINGLE:
@@ -286,6 +369,51 @@ export function gdyCanBeatHand(cards, lastPlay) {
     }
     default:
       break;
+  }
+  return false;
+}
+
+// 判断手牌中是否至少存在一种组合能接掉 lastPlay（用于"吃不起 3 秒自动过"）。
+// lastPlayCards 可选：上家含癞子的顺子/连对取点浮动时，逐个解释检查，任一能接即可。
+// 判定口径与 gdyBeats 完全一致：非炸弹同型顺移一号（单张/对子另加 2 通吃），
+// 炸弹吃一切非炸弹、炸弹之间先比张数再比点数、同点真牌压制含癞子的同点炸弹。
+export function gdyCanBeatHand(cards, lastPlay, lastPlayCards = null) {
+  if (!lastPlay) return true;
+  const jokers = cards.filter(isGdyJoker).length;
+  const counts = {};
+  for (const card of cards) {
+    if (!isGdyJoker(card)) {
+      const value = gdyRankValue(card);
+      counts[value] = (counts[value] ?? 0) + 1;
+    }
+  }
+  // 组成 need 张同点炸弹（真实牌 + 癞子补足）
+  const fitsBomb = (rank, need) => (counts[rank] ?? 0) + jokers >= need;
+
+  if (lastPlay.type === GDY_PLAY_TYPE.BOMB) {
+    // 同点数仅当真牌完全压制（上家含癞子而我有足量真牌）
+    if (lastPlay.wilds > 0 && (counts[lastPlay.rank] ?? 0) >= lastPlay.size) return true;
+    for (let rank = lastPlay.rank + 1; rank <= 15; rank += 1) {
+      if (fitsBomb(rank, lastPlay.size)) return true;
+    }
+    // 三张炸还能被任意四张炸接
+    if (lastPlay.size === 3) {
+      for (let rank = 3; rank <= 15; rank += 1) {
+        if (fitsBomb(rank, 4)) return true;
+      }
+    }
+    return false;
+  }
+
+  // 同型紧邻大一号：上家含癞子时取点浮动（56王 = 456/567），任一解释能接即可
+  const floats = lastPlayCards
+    && lastPlay.wilds > 0
+    && (lastPlay.type === GDY_PLAY_TYPE.STRAIGHT || lastPlay.type === GDY_PLAY_TYPE.PAIRS);
+  const targets = floats
+    ? gdyPlayInterpretations(lastPlayCards).filter((item) => item.type === lastPlay.type)
+    : [lastPlay];
+  for (const target of targets) {
+    if (canBeatFixedPlay(counts, jokers, target)) return true;
   }
   // 任何炸弹都能接非炸弹
   for (let rank = 3; rank <= 15; rank += 1) {

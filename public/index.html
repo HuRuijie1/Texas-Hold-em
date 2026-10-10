@@ -227,10 +227,14 @@
             <div class="header-actions">
               <div class="header-secondary" id="headerSecondary">
                 <div class="bot-controls">
+                  <!-- 选项由 client.js 的 syncBotLevelOptions 按游戏类型动态填充：
+                       德州用五档扑克风格等级，炸金花/干瞪眼用旧三档 -->
                   <select id="botLevelSelect">
-                    <option value="beginner">初级机器人</option>
-                    <option value="intermediate">中级机器人</option>
-                    <option value="advanced">高级机器人</option>
+                    <option value="fish">新手鱼</option>
+                    <option value="regular">常规玩家</option>
+                    <option value="lag">松凶玩家</option>
+                    <option value="tag">紧凶高手</option>
+                    <option value="gto">GTO大师</option>
                   </select>
                   <button id="addBotBtn" class="ghost" type="button">添加机器人</button>
                 </div>

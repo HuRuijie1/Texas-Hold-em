@@ -1,5 +1,5 @@
 import { ZJH_CATEGORY, evaluateZjhHand } from './zjh.js';
-import { normalizeBotLevel } from './bot-ai.js';
+import { normalizeBotLevel } from './legacy-bot-levels.js';
 
 // 各级别决策阈值
 const THRESHOLDS = {

@@ -6,7 +6,8 @@ import {
   evaluateZjhHand,
 } from './zjh.js';
 import { decideZjhBotTurn } from './zjh-bot.js';
-import { botLevelLabel, normalizeBotLevel } from './bot-ai.js';
+// 炸金花沿用旧三档等级，与德州的五档互不干扰
+import { botLevelLabel, normalizeBotLevel } from './legacy-bot-levels.js';
 
 export const ZJH_DEFAULT_CONFIG = {
   maxSeats: 6,

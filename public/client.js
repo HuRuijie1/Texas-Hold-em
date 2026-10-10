@@ -81,7 +81,18 @@
 
   };
 
+  // 德州已改为五档扑克风格等级；旧三档保留用于炸金花/干瞪眼以及旧存档的机器人
   const BOT_LEVEL_LABELS = {
+
+    fish: '新手鱼',
+
+    regular: '常规玩家',
+
+    lag: '松凶玩家',
+
+    tag: '紧凶高手',
+
+    gto: 'GTO大师',
 
     beginner: '初级',
 
@@ -91,13 +102,70 @@
 
   };
 
+  const TEXAS_BOT_OPTIONS = [
+
+    { value: 'fish', text: '新手鱼' },
+
+    { value: 'regular', text: '常规玩家' },
+
+    { value: 'lag', text: '松凶玩家' },
+
+    { value: 'tag', text: '紧凶高手' },
+
+    { value: 'gto', text: 'GTO大师' },
+
+  ];
+
+  const LEGACY_BOT_OPTIONS = [
+
+    { value: 'beginner', text: '初级机器人' },
+
+    { value: 'intermediate', text: '中级机器人' },
+
+    { value: 'advanced', text: '高级机器人' },
+
+  ];
+
   function botLevelClass(level) {
 
-    if (level === 'advanced') return 'advanced';
+    return BOT_LEVEL_LABELS[level] ? level : 'beginner';
 
-    if (level === 'intermediate') return 'intermediate';
+  }
 
-    return 'beginner';
+  /**
+   * 按游戏类型切换机器人等级下拉框。
+   * renderTable 每次 socket 推送都会执行，重建 <select> 会重置用户已选的等级，
+   * 因此用 dataset.sig 做幂等守卫：选项没变就不动它。
+   */
+  function syncBotLevelOptions(room) {
+
+    const select = elements.botLevelSelect;
+
+    if (!select) return;
+
+    const isTexas = !room?.gameType || room.gameType === 'texas';
+
+    const list = isTexas ? TEXAS_BOT_OPTIONS : LEGACY_BOT_OPTIONS;
+
+    const signature = list.map((option) => option.value).join(',');
+
+    if (select.dataset.sig === signature) return;
+
+    select.dataset.sig = signature;
+
+    select.innerHTML = '';
+
+    for (const option of list) {
+
+      const element = document.createElement('option');
+
+      element.value = option.value;
+
+      element.textContent = option.text;
+
+      select.appendChild(element);
+
+    }
 
   }
 
@@ -1484,6 +1552,9 @@
     elements.roomCodeBadge.textContent = room.code;
 
     elements.roomName.textContent = room.name;
+
+    // 德州用五档等级，炸金花/干瞪眼用旧三档
+    syncBotLevelOptions(room);
 
     // 炸金花/干瞪眼与德州共用外框，内部按游戏类型分别渲染
     if (room.gameType === 'zjh') {

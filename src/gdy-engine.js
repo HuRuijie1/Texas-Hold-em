@@ -11,7 +11,8 @@ import {
   isGdyJoker,
 } from './gdy.js';
 import { decideGdyBotTurn } from './gdy-bot.js';
-import { botLevelLabel, normalizeBotLevel } from './bot-ai.js';
+// 干瞪眼沿用旧三档等级，与德州的五档互不干扰
+import { botLevelLabel, normalizeBotLevel } from './legacy-bot-levels.js';
 
 export const GDY_DEFAULT_CONFIG = {
   maxSeats: 5,       // 座位数（2-5 人玩，一副 54 张牌）

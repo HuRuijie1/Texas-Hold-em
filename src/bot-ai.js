@@ -31,6 +31,7 @@ export {
   assessStrength,
   botLevelLabel,
   botThinkDelayMs,
+  botThinkTuning,
   buildBotView,
   chooseBotAction,
   decideBotTurn,

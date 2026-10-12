@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { analyzeBoard, chooseBotAction, decideBotTurn, derivePersona, detectDraws } from '../src/bot-ai.js';
+import { analyzeBoard, botThinkTuning, chooseBotAction, decideBotTurn, derivePersona, detectDraws } from '../src/bot-ai.js';
 import { GameManager } from '../src/game-engine.js';
 
 class MemoryStore {
@@ -238,10 +238,11 @@ test('decideBotTurn returns humanized delays within bounds', () => {
     maxRaiseTo: 640,
     isCallOnly: false,
   };
+  const { minMs, maxMs } = botThinkTuning();
   for (let i = 0; i < 20; i += 1) {
     player.botNonce = i;
     const decision = decideBotTurn(room, player, actions);
     validateAction(decision.action, actions);
-    assert.ok(decision.delayMs >= 250 && decision.delayMs <= 4500, `延迟越界: ${decision.delayMs}`);
+    assert.ok(decision.delayMs >= minMs && decision.delayMs <= maxMs, `延迟越界: ${decision.delayMs}`);
   }
 });

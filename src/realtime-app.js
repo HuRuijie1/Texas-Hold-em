@@ -1,10 +1,26 @@
 import express from 'express';
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { Server as SocketIOServer } from 'socket.io';
 import { GameManager, makeToken, DEFAULT_CONFIG } from './game-engine.js';
 import { ZjhManager, ZJH_DEFAULT_CONFIG } from './zjh-engine.js';
 import { GdyManager, GDY_DEFAULT_CONFIG } from './gdy-engine.js';
 import { RoomStore } from './store.js';
+
+// 读取项目根目录的 .env（存在时覆盖同名环境变量，使改配置只需重启进程）
+// 无 .env（本地开发/测试）时静默跳过
+function loadEnvFile() {
+  try {
+    const text = readFileSync(new URL('../.env', import.meta.url), 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const matched = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (matched) process.env[matched[1]] = matched[2].trim();
+    }
+  } catch {
+    // 无 .env 文件则忽略
+  }
+}
+loadEnvFile();
 
 export function createRealtimeApp({ store = new RoomStore() } = {}) {
   // 启动时清理 30 天前的牌局历史，防止 hand_history 无限膨胀拖慢写库
@@ -22,6 +38,15 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
 
   // root 管理密钥：环境变量 ROOT_KEY 可覆盖，默认 root123（仅适合内网/私人部署，公网务必改掉）
   const rootKey = process.env.ROOT_KEY ?? 'root123';
+
+  // 引擎 tick 周期（毫秒）：默认 200ms，三引擎共用，环境变量 GAME_TICK_MS 可调。
+  // 放在 createRealtimeApp 内读取，确保根目录 .env 已被 loadEnvFile() 加载。
+  // 调小只会让机器人行动与超时托管更及时；调大则机器人出牌变慢。
+  const rawTickMs = process.env.GAME_TICK_MS;
+  const envTickMs = rawTickMs === undefined || rawTickMs === '' ? NaN : Number(rawTickMs);
+  const tickMs = Number.isFinite(envTickMs)
+    ? Math.min(1000, Math.max(50, Math.floor(envTickMs)))
+    : 200;
 
   let io = null;
 
@@ -100,6 +125,8 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
   }
 
   let roomsListTimer = null;
+  // 上一次广播的房间列表指纹：内容未变则不再广播，避免牌桌内每 500ms 被无意义唤醒
+  let lastRoomsListFingerprint = '';
 
   function emitRoomsListNow() {
     if (!io) return;
@@ -107,7 +134,11 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
       clearTimeout(roomsListTimer);
       roomsListTimer = null;
     }
-    io.emit('rooms:list', { rooms: mergedRooms() });
+    const rooms = mergedRooms();
+    const fingerprint = JSON.stringify(rooms);
+    if (fingerprint === lastRoomsListFingerprint) return;
+    lastRoomsListFingerprint = fingerprint;
+    io.emit('rooms:list', { rooms });
   }
 
   // 动作路径的全服房间列表广播做 500ms 合并：机器人房每秒一手时避免持续轰炸所有客户端
@@ -148,7 +179,9 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
       res.status(404).json({ error: 'not_found' });
       return;
     }
-    res.json({ history: manager.listHandHistory(req.params.code, Number(req.query.limit ?? 10)) });
+    // 限制上限，避免 ?limit=超大值 把整表历史读出来、非数字导致 SQL 报错
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 10, 1), 50);
+    res.json({ history: manager.listHandHistory(req.params.code, limit) });
   });
 
   // ===== root 管理：查看全部房间 / 强制删除房间（含进行中对局） =====
@@ -486,7 +519,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     } catch (error) {
       console.error('gdyManager.tick error:', error);
     }
-  }, 1000);
+  }, tickMs);
   timer.unref();
 
   return {

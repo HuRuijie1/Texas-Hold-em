@@ -2478,6 +2478,133 @@ body.is-gdy-view .bottom-bar-log {
   overflow: visible;
 }
 
+/* ===== 斗牛底部栏：手牌整行放大 + 点击选 3 张牛牌 ===== */
+body.is-dn-view .bottom-bar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+body.is-dn-view .bottom-bar-hand,
+body.is-dn-view .bottom-bar-actions,
+body.is-dn-view .bottom-bar-log {
+  overflow: visible;
+}
+
+/* 手牌行：占满整行，5 张牌一行排开、不换行不滚动 */
+body.is-dn-view .bottom-bar-hand {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 6px 10px 4px;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+body.is-dn-view .viewer-cards {
+  flex-wrap: nowrap;
+  justify-content: center;
+  align-content: center;
+  gap: clamp(4px, 1.2vw, 10px);
+  min-height: clamp(96px, 22vw, 124px);
+  max-height: none;
+  overflow: visible;
+  /* 选中牌上浮 10px + 高亮圈，顶部留足空间避免被裁剪 */
+  padding: 14px 6px 6px;
+}
+body.is-dn-view .viewer-cards .card {
+  flex: 0 0 auto;
+  width: clamp(52px, 13vw, 72px);
+  height: clamp(72px, 18vw, 100px);
+  cursor: pointer;
+  transition: transform 0.14s ease, box-shadow 0.14s ease;
+}
+body.is-dn-view .viewer-cards .card .corner { font-size: clamp(0.55rem, 1.7vw, 0.72rem); }
+body.is-dn-view .viewer-cards .card .rank { font-size: clamp(0.85rem, 2.6vw, 1.1rem); }
+body.is-dn-view .viewer-cards .card .suit-symbol { font-size: clamp(0.6rem, 1.9vw, 0.8rem); }
+body.is-dn-view .viewer-cards .card .center-suit { font-size: clamp(1.3rem, 4vw, 1.8rem); }
+
+/* 选中：上浮 + 金色高亮圈 */
+body.is-dn-view .viewer-cards .card.selected {
+  transform: translateY(-10px);
+  box-shadow: 0 0 0 3px #ffb020, 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+body.is-dn-view .viewer-cards .card:not(.selected):hover {
+  transform: translateY(-4px);
+}
+/* 已选牌：牛牌打标（绿色圈） */
+body.is-dn-view .viewer-cards .card.bull {
+  box-shadow: 0 0 0 3px #4ade80, 0 8px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* 操作行：独占一行，按钮加大、可换行 */
+body.is-dn-view .bottom-bar-actions {
+  border-right: none;
+  padding: 6px 10px;
+}
+body.is-dn-view .dn-action-grid {
+  display: flex !important;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+}
+body.is-dn-view .dn-action-grid button {
+  flex: 0 0 auto !important;
+  width: auto !important;
+  display: inline-block;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  padding: 10px 18px !important;
+  font-size: 0.92rem !important;
+  border-radius: 10px;
+}
+body.is-dn-view .dn-pick-status,
+body.is-dn-view .dn-special-banner {
+  flex-basis: 100%;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+body.is-dn-view .dn-pick-status {
+  color: var(--text-dim);
+  background: rgba(0, 0, 0, 0.25);
+}
+body.is-dn-view .dn-special-banner {
+  color: #ffd479;
+  background: rgba(255, 176, 32, 0.16);
+  border: 1px solid rgba(255, 191, 71, 0.5);
+}
+body.is-dn-view .bottom-bar-actions .room-meta {
+  font-size: 0.75rem;
+  padding: 2px 4px 4px;
+}
+
+/* 结算弹窗与座位上的牛牌高亮 */
+.player-result-cards .card.dn-bull-card,
+.seat-cards .card.dn-bull-card {
+  box-shadow: 0 0 0 2px #4ade80;
+  border-radius: 4px;
+}
+
+/* 无庄模式不需要"查看"按钮兜底（自己的牌始终正面） */
+body.is-dn-view .bottom-bar-label { font-size: 0.66rem; }
+body.is-gdy-view .bottom-bar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+body.is-gdy-view .bottom-bar-hand,
+body.is-gdy-view .bottom-bar-actions,
+body.is-gdy-view .bottom-bar-log {
+  overflow: visible;
+}
+
 /* 手牌行：占满整行，卡牌放大、可换行、超高滚动 */
 body.is-gdy-view .bottom-bar-hand {
   flex-direction: column;
@@ -2593,4 +2720,156 @@ body.is-gdy-view .bottom-bar-actions .room-meta {
   margin-top: 10px;
   max-height: 46vh;
   overflow-y: auto;
+}
+
+/* ===== 斗牛（牛牛） ===== */
+.room-game-badge.dn {
+  background: rgba(255, 107, 107, 0.2);
+  color: #ff9b6b;
+}
+
+/* 斗牛顶部信息条：底分 / 倍数上限 / 封顶 / 庄家（右侧可挂庄家操作区） */
+.dn-info {
+  border-color: rgba(255, 155, 107, 0.3);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 10px;
+}
+
+.dn-next-banker {
+  margin-top: 2px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #ffd479;
+  letter-spacing: 0.5px;
+}
+
+/* 庄家续庄 / 移交操作区（结算弹窗 + 牌桌顶部共用） */
+.dn-banker-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 155, 107, 0.35);
+  border-radius: var(--radius);
+  background: rgba(255, 155, 107, 0.08);
+}
+
+.dn-banker-control.compact {
+  margin-top: 0;
+  padding: 6px 8px;
+  background: transparent;
+  border-color: rgba(255, 155, 107, 0.25);
+}
+
+.dn-banker-status {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.dn-banker-status.muted { opacity: 0.7; font-weight: 500; }
+
+.dn-banker-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.dn-banker-keep-btn,
+.dn-banker-transfer-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 700;
+  font-size: 0.76rem;
+  cursor: pointer;
+  color: #221a00;
+}
+.dn-banker-keep-btn {
+  background: linear-gradient(135deg, #2c7a4b, #4ade80);
+}
+.dn-banker-transfer-btn {
+  background: linear-gradient(135deg, #b8860b, #ffb020);
+}
+.dn-banker-keep-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dn-banker-target {
+  flex: 1;
+  min-width: 120px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 0.76rem;
+}
+
+/* 大厅：斗牛庄家模式下拉与输入框同款 */
+.config-row select {
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+/* 座位牌型标签（摊牌后显示，如「牛牛 K高」） */
+.dn-hand-label {
+  margin-top: 3px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1.5;
+  color: #ffd479;
+  background: rgba(255, 176, 32, 0.16);
+  border: 1px solid rgba(255, 191, 71, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* 盲注按钮：倍数较多时自动换行铺满 */
+.dn-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+}
+.dn-action-grid button {
+  flex: none;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.dn-mult-btn {
+  background: linear-gradient(135deg, #2c7a4b, #4ade80);
+  color: #06210f;
+  font-weight: 700;
+  border: none;
+  border-radius: 8px;
+  padding: 9px 8px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.dn-mult-btn:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+.dn-mult-btn:active:not(:disabled) { transform: translateY(0); }
+.dn-mult-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+@media (max-width: 620px) {
+  .dn-action-grid { grid-template-columns: repeat(auto-fit, minmax(68px, 1fr)); }
+  .dn-mult-btn { padding: 8px 6px; font-size: 0.72rem; }
+  .dn-hand-label { font-size: 0.55rem; padding: 1px 6px; }
 }

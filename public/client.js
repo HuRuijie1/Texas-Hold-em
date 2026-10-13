@@ -79,6 +79,13 @@
 
     gdyHandId: null,
 
+    // 斗牛：庄家续庄/移交请求进行中（防双击重复提交）
+    dnBankerPending: false,
+
+    // 斗牛选牛牌阶段：当前选中的手牌下标与所属局 id
+    dnSelected: [],
+    dnHandId: null,
+
   };
 
   // 德州已改为五档扑克风格等级；旧三档保留用于炸金花/干瞪眼以及旧存档的机器人
@@ -101,6 +108,13 @@
     advanced: '高级',
 
   };
+
+  // 房间列表 / root 面板的游戏类型标签
+  const GAME_BADGES = { texas: '德州', zjh: '炸金花', gdy: '干瞪眼', dn: '斗牛' };
+
+  function gameBadgeText(gameType) {
+    return GAME_BADGES[gameType] ?? '德州';
+  }
 
   const TEXAS_BOT_OPTIONS = [
 
@@ -479,6 +493,21 @@
     gdyStartingStack: $('gdyStartingStack'),
     gdyMaxSeats: $('gdyMaxSeats'),
     gdyActionTimeout: $('gdyActionTimeout'),
+    dnInfo: $('dnInfo'),
+    dnInfoText: $('dnInfoText'),
+    dnBankerTableControl: $('dnBankerTableControl'),
+    dnBankerModalControl: $('dnBankerModalControl'),
+    dnConfigRow: $('dnConfigRow'),
+    dnBankerMode: $('dnBankerMode'),
+    dnBaseStake: $('dnBaseStake'),
+    dnMaxBetMultField: $('dnMaxBetMultField'),
+    dnMaxBetMult: $('dnMaxBetMult'),
+    dnScoreCapField: $('dnScoreCapField'),
+    dnScoreCap: $('dnScoreCap'),
+    dnStartingStack: $('dnStartingStack'),
+    dnMaxSeats: $('dnMaxSeats'),
+    dnActionTimeoutField: $('dnActionTimeoutField'),
+    dnActionTimeout: $('dnActionTimeout'),
     rootAdminBtn: $('rootAdminBtn'),
     rootModal: $('rootModal'),
     rootKeyInput: $('rootKeyInput'),
@@ -826,6 +855,7 @@
     setTableMode(false);
 
     document.body.classList.remove('is-gdy-view');
+    document.body.classList.remove('is-dn-view');
 
     elements.lobbyView.classList.remove('hidden');
 
@@ -853,7 +883,7 @@
 
       const badge = document.createElement('span');
       badge.className = `room-game-badge ${room.gameType}`;
-      badge.textContent = room.gameType === 'zjh' ? '炸金花' : room.gameType === 'gdy' ? '干瞪眼' : '德州';
+      badge.textContent = gameBadgeText(room.gameType);
 
       const name = document.createElement('strong');
 
@@ -1177,6 +1207,15 @@
     else if (type === 'play') SFX.raise();
 
     else if (type === 'pass') SFX.fold();
+
+    // 斗牛动作
+    else if (type === 'bet') SFX.raise();
+
+    else if (type === 'pick') SFX.check();
+
+    else if (type === 'ante') SFX.call();
+
+    else if (type === 'nobull') SFX.fold();
 
   }
 
@@ -1518,7 +1557,11 @@
     setTableMode(true);
 
     // 干瞪眼视图标记：底部栏改为"手牌整行 + 操作换行"布局
-    document.body.classList.toggle('is-gdy-view', room.gameType === 'gdy');
+    // 斗牛同样需要整行大手牌来选牛牌
+    const isGdy = room.gameType === 'gdy';
+    const isDn = room.gameType === 'dn';
+    document.body.classList.toggle('is-gdy-view', isGdy);
+    document.body.classList.toggle('is-dn-view', isDn);
 
     state.room = room;
 
@@ -1573,9 +1616,19 @@
 
     }
 
+    if (room.gameType === 'dn') {
+
+      renderDnTable(room);
+
+      return;
+
+    }
+
     elements.zjhInfo.classList.add('hidden');
 
     elements.gdyInfo.classList.add('hidden');
+
+    elements.dnInfo.classList.add('hidden');
 
     const startState = getHandStartState(room);
 
@@ -1715,17 +1768,21 @@
   function currentGameType() {
     const checked = document.querySelector('input[name="gameType"]:checked');
     const value = checked?.value;
-    return value === 'zjh' || value === 'gdy' ? value : 'texas';
+    return value === 'zjh' || value === 'gdy' || value === 'dn' ? value : 'texas';
   }
 
   function gdyTimeoutMs() {
-    return Math.min(120, Math.max(5, Math.round(Number(elements.gdyActionTimeout?.value) || 30))) * 1000;
+    return timeoutMsFrom(elements.gdyActionTimeout);
+  }
+
+  function timeoutMsFrom(input) {
+    return Math.min(120, Math.max(5, Math.round(Number(input?.value) || 30))) * 1000;
   }
 
   function createRoom() {
 
     const gameType = currentGameType();
-    const gameLabel = gameType === 'zjh' ? '炸金花桌' : gameType === 'gdy' ? '干瞪眼桌' : '牌桌';
+    const gameLabel = gameType === 'zjh' ? '炸金花桌' : gameType === 'gdy' ? '干瞪眼桌' : gameType === 'dn' ? '斗牛桌' : '牌桌';
     const config = gameType === 'zjh' ? {
       ante: Number(elements.zjhAnte?.value || 10),
       baseStake: Number(elements.zjhBaseStake?.value || 10),
@@ -1740,6 +1797,17 @@
       startingStack: Number(elements.gdyStartingStack?.value || 200),
       maxSeats: Math.min(5, Math.max(2, Number(elements.gdyMaxSeats?.value || 5))),
       actionTimeoutMs: gdyTimeoutMs(),
+    } : gameType === 'dn' ? {
+      bankerMode: elements.dnBankerMode?.value === 'none' ? 'none' : 'banker',
+      baseStake: Math.max(1, Number(elements.dnBaseStake?.value || 10)),
+      // 无庄模式没有倍数与封顶，也不存在玩家行动 → 不下发这些配置
+      ...(elements.dnBankerMode?.value === 'none' ? {} : {
+        maxBetMult: Math.min(10, Math.max(1, Number(elements.dnMaxBetMult?.value || 5))),
+        scoreCap: Math.max(0, Number(elements.dnScoreCap?.value || 0)),
+        actionTimeoutMs: timeoutMsFrom(elements.dnActionTimeout),
+      }),
+      startingStack: Number(elements.dnStartingStack?.value || 2000),
+      maxSeats: Math.min(9, Math.max(2, Number(elements.dnMaxSeats?.value || 6))),
     } : {
       smallBlind: Number(elements.smallBlind.value || 10),
 
@@ -2402,6 +2470,26 @@
     if (elements.texasConfigRow) elements.texasConfigRow.classList.toggle('hidden', gameType !== 'texas');
     if (elements.zjhConfigRow) elements.zjhConfigRow.classList.toggle('hidden', gameType !== 'zjh');
     if (elements.gdyConfigRow) elements.gdyConfigRow.classList.toggle('hidden', gameType !== 'gdy');
+    if (elements.dnConfigRow) elements.dnConfigRow.classList.toggle('hidden', gameType !== 'dn');
+    updateDnModeFields();
+  }
+
+  // 斗牛：无庄模式下没有倍数/封顶，也不存在玩家行动时限 → 隐藏并禁用这些字段
+  function updateDnModeFields() {
+    const isBankerMode = elements.dnBankerMode?.value !== 'none';
+    for (const [wrapper, input] of [
+      [elements.dnMaxBetMultField, elements.dnMaxBetMult],
+      [elements.dnScoreCapField, elements.dnScoreCap],
+      [elements.dnActionTimeoutField, elements.dnActionTimeout],
+    ]) {
+      if (!wrapper) continue;
+      wrapper.classList.toggle('hidden', !isBankerMode);
+      if (input) input.disabled = !isBankerMode;
+    }
+  }
+
+  if (elements.dnBankerMode) {
+    elements.dnBankerMode.addEventListener('change', updateDnModeFields);
   }
 
   document.querySelectorAll('input[name="gameType"]').forEach((radio) => {
@@ -2419,6 +2507,11 @@
     const modal = document.getElementById('handEndModal');
     modal.classList.add('hidden');
     state.modalOpen = false;
+    // 斗牛庄家操作区随弹窗收起（牌桌顶部还有一份常驻入口）
+    if (elements.dnBankerModalControl) {
+      elements.dnBankerModalControl.classList.add('hidden');
+      elements.dnBankerModalControl.innerHTML = '';
+    }
     const nextHandBtn = document.getElementById('nextHandBtn');
     nextHandBtn.disabled = true;
     // 收起后若本局结算仍有效，显示「查看结算」悬浮入口
@@ -2517,6 +2610,11 @@
 
     if (room.gameType === 'zjh') {
       renderZjhHandEndResults(room);
+      return;
+    }
+
+    if (room.gameType === 'dn') {
+      renderDnHandEndResults(room);
       return;
     }
 
@@ -2860,6 +2958,12 @@ nextHandBtn.addEventListener('click', () => {
       look: '看牌',
       compare: amount ? `比牌 ${amount}` : '比牌',
       compared: '被比出局',
+      // 斗牛动作（无庄：ante；有庄：bet 盲注 / pick 选牛牌 / skip 放弃本局）
+      bet: amount ? `盲注 ×${amount}` : '盲注',
+      pick: '已选牌',
+      nobull: '没牛',
+      skip: '放弃本局',
+      ante: amount ? `底注 ${amount}` : '底注',
       // 干瞪眼动作
       play: label || '出牌',
       pass: '干瞪眼',
@@ -2877,6 +2981,11 @@ nextHandBtn.addEventListener('click', () => {
       compared: 'fold',
       play: 'raise',
       pass: 'fold',
+      bet: 'raise',
+      pick: 'check',
+      nobull: 'fold',
+      skip: 'fold',
+      ante: 'call',
     };
     if (TYPE_CLASS[actionType]) {
       actionEl.classList.add(TYPE_CLASS[actionType]);
@@ -3904,8 +4013,651 @@ nextHandBtn.addEventListener('click', () => {
   }
 
 
+  // ===== 斗牛（牛牛）渲染：无庄 / 有庄 双模式 =====
+
+  function dnMode(room) {
+    return room.bankerMode ?? room.config?.bankerMode ?? 'banker';
+  }
+
+  // 本局庄家在结算后决定「续庄 / 移交给指定玩家」；弹窗与牌桌顶部共用同一套渲染
+  function sendBankerDecision(action, targetToken = null) {
+    if (!state.room || state.dnBankerPending) return;
+    state.dnBankerPending = true;
+    socket.emit('room:banker', {
+      roomCode: state.room.code,
+      token: state.token,
+      action,
+      targetToken,
+    }, (result) => {
+      state.dnBankerPending = false;
+      if (!result?.ok) {
+        showToast(result?.error || '庄家操作失败', true);
+        return;
+      }
+      showToast(action === 'transfer' ? '已移交庄家' : '已续庄');
+      if (result.room) renderTable(result.room);
+    });
+  }
+
+  function renderDnBankerControl(room, container, { compact = false } = {}) {
+    if (!container) return;
+    const control = room.bankerControl;
+    const usable = dnMode(room) === 'banker' && control && (control.canManage || control.decisionPending);
+    container.classList.toggle('compact', compact);
+    if (!usable) {
+      container.classList.add('hidden');
+      container.innerHTML = '';
+      return;
+    }
+    container.classList.remove('hidden');
+    container.innerHTML = '';
+
+    const status = document.createElement('div');
+    status.className = 'dn-banker-status';
+
+    // 已做过决定 → 只读展示下一局庄家
+    if (!control.canManage) {
+      const decision = control.decision;
+      status.textContent = decision?.action === 'transfer'
+        ? `下局庄家：${decision.targetName ?? room.banker?.name ?? '新庄家'}`
+        : `下局庄家：${room.banker?.name ?? '保持不变'}（已续庄）`;
+      container.append(status);
+      return;
+    }
+
+    status.textContent = '你是本局庄家：选择下一局由谁坐庄';
+    container.append(status);
+
+    const row = document.createElement('div');
+    row.className = 'dn-banker-row';
+
+    const keepBtn = document.createElement('button');
+    keepBtn.type = 'button';
+    keepBtn.className = 'dn-banker-keep-btn';
+    keepBtn.textContent = '续庄';
+    keepBtn.disabled = !control.canKeep;
+    keepBtn.title = control.canKeep ? '' : '你当前无法继续坐庄（未坐下 / 筹码不足 / 已暂离）';
+    keepBtn.addEventListener('click', () => sendBankerDecision('keep'));
+    row.append(keepBtn);
+
+    const candidates = control.transferCandidates ?? [];
+    if (candidates.length) {
+      const select = document.createElement('select');
+      select.className = 'dn-banker-target';
+      for (const candidate of candidates) {
+        const option = document.createElement('option');
+        option.value = candidate.targetToken;
+        option.textContent = `${candidate.name}（${candidate.seatIndex + 1} 号位 · ${candidate.stack}）`;
+        select.appendChild(option);
+      }
+      const transferBtn = document.createElement('button');
+      transferBtn.type = 'button';
+      transferBtn.className = 'dn-banker-transfer-btn';
+      transferBtn.textContent = '移交';
+      transferBtn.addEventListener('click', () => {
+        const targetToken = select.value;
+        if (!targetToken) {
+          showToast('请选择移交目标', true);
+          return;
+        }
+        sendBankerDecision('transfer', targetToken);
+      });
+      row.append(select, transferBtn);
+    } else {
+      const empty = document.createElement('span');
+      empty.className = 'dn-banker-status muted';
+      empty.textContent = '暂无可移交玩家';
+      row.append(empty);
+    }
+
+    container.append(row);
+  }
+
+  function renderDnTable(room) {
+    const startState = getHandStartState(room);
+    elements.dealerMessage.textContent = room.hand?.dealerMessage || (startState.needsReady
+      ? `等待准备 ${startState.readyCount}/${startState.readyTotal}`
+      : (startState.canStartDirectly ? '等待开始' : '等待更多玩家'));
+
+    const hand = room.hand;
+    const mode = dnMode(room);
+    if (!hand) {
+      elements.pot.textContent = '等待开局';
+    } else if (hand.status === 'finished') {
+      elements.pot.textContent = hand.finalPot > 0 ? `本局输赢 ${hand.finalPot}` : '本局流局';
+    } else if (mode === 'none') {
+      elements.pot.textContent = `底注 ${room.config.baseStake} · 最大者通吃（按牌型翻倍）`;
+    } else {
+      elements.pot.textContent = '发牌前 · 闲家盲注';
+    }
+
+    elements.zjhInfo.classList.add('hidden');
+    elements.gdyInfo.classList.add('hidden');
+    renderDnInfo(room);
+    renderDnBankerControl(room, elements.dnBankerTableControl, { compact: true });
+    elements.board.innerHTML = '';
+    renderDnSeats(room);
+    renderMembers(room);
+    renderDnHand(room);
+    renderDnActions(room);
+    renderLogs(room);
+    updateTurnAlert(room);
+    maybePlayActionSound(room);
+    maybeAnimateChips(room);
+    maybePlayWinSound(room);
+    updateStartControlButton(elements.startHandBtn, room);
+    updatePlayerControlButtons(room);
+    handleHandEndUi(room);
+  }
+
+  function renderDnInfo(room) {
+    const el = elements.dnInfo;
+    const text = elements.dnInfoText;
+    if (!el) return;
+    if (!room.hand) {
+      el.classList.add('hidden');
+      return;
+    }
+    el.classList.remove('hidden');
+    if (!text) return;
+
+    if (dnMode(room) === 'none') {
+      text.textContent = `无庄模式 · 强制底注 ${room.config.baseStake} · 摊牌最大者通吃底池`;
+      return;
+    }
+    const capText = room.config.scoreCap > 0 ? ` · 封顶 ${room.config.scoreCap}` : ' · 不封顶';
+    const running = room.hand.status === 'running';
+    const currentBanker = room.players.find((player) => player.isBanker)?.name ?? null;
+    const label = running
+      ? `庄家 ${currentBanker ?? room.banker?.name ?? '待定'}`
+      : `下局庄家 ${room.banker?.name ?? '待定'}`;
+    text.textContent = `有庄模式 · 底分 ${room.config.baseStake} · 盲注上限 ×${room.config.maxBetMult}${capText} · ${label}`;
+  }
+
+  function dnSeatTags(room, player) {
+    const tags = [];
+    if (player.isHost) tags.push('房主');
+    if (player.isBot) tags.push('🤖 ' + (BOT_LEVEL_LABELS[player.botLevel] || '机器人'));
+    if (!player.connected && !player.isBot) tags.push('离线');
+    if (player.sitOut) tags.push('暂离');
+    if (room.hand?.status === 'running' && player.inHand) {
+      if (player.isBanker) tags.push('庄家');
+      else if (player.skipped) tags.push('已放弃');
+      if (player.pickDone) tags.push('已选牌');
+    }
+    if (room.hand?.status !== 'running' && player.seatIndex !== null && !player.isBot && player.stack > 0 && !player.sitOut) {
+      tags.push(player.ready ? '已准备' : '未准备');
+    }
+    return tags.join(' · ');
+  }
+
+  function renderDnSeats(room) {
+    elements.seatGrid.innerHTML = '';
+
+    const seats = Array.from({ length: room.config.maxSeats }, (_, index) => ({
+      index,
+      player: room.players.find((player) => player.seatIndex === index) || null,
+    }));
+    const positions = layoutSeats(room.config.maxSeats);
+
+    seats.forEach((seat) => {
+      const card = document.createElement('div');
+      const [x, y] = positions[seat.index];
+      card.className = 'seat';
+      card.style.left = `${x}%`;
+      card.style.top = `${y}%`;
+
+      if (!seat.player) {
+        card.classList.add('empty');
+        const label = document.createElement('span');
+        label.textContent = `${seat.index + 1} 号位`;
+        const sitBtn = document.createElement('button');
+        sitBtn.type = 'button';
+        sitBtn.textContent = '坐下';
+        sitBtn.addEventListener('click', () => sitAtSeat(seat.index));
+        card.append(label, sitBtn);
+        elements.seatGrid.append(card);
+        return;
+      }
+
+      if (seat.player.isViewer) card.classList.add('viewer');
+      if (
+        room.hand?.status === 'finished'
+        && (room.hand.winners ?? []).some((winner) => winner.name === seat.player.name)
+      ) {
+        card.classList.add('winner');
+      }
+      if (room.hand?.actionSeat === seat.index) card.classList.add('active-turn');
+
+      // 庄家徽章：有庄模式在发牌前就已确定，因此开局即显示
+      if (seat.player.isBanker) {
+        const badge = document.createElement('span');
+        badge.className = 'seat-badge d';
+        badge.textContent = '庄';
+        card.appendChild(badge);
+      }
+
+      const streetActions = room.hand?.playerStreetActions ?? {};
+      const playerStreetAction = streetActions[seat.index];
+      if (playerStreetAction) {
+        card.appendChild(createActionElement(playerStreetAction.type, playerStreetAction.amount));
+        card.classList.add('has-action');
+      }
+
+      const title = document.createElement('div');
+      title.className = 'seat-name';
+      const playerName = document.createElement('span');
+      playerName.textContent = seat.player.name;
+      const seatNumber = document.createElement('span');
+      seatNumber.textContent = `#${seat.index + 1}`;
+      title.append(playerName, seatNumber);
+
+      const stack = document.createElement('div');
+      stack.className = 'seat-stack';
+      stack.textContent = `${seat.player.stack} 筹码`;
+
+      card.append(title, stack);
+
+      // 本局投入：无庄 = 底注（不足则全下）；有庄 = 庄家 / 盲注 ×N
+      if (room.hand?.status === 'running' && seat.player.inHand) {
+        const bet = document.createElement('div');
+        bet.className = 'seat-bet';
+        if (dnMode(room) === 'none') {
+          const allIn = seat.player.handContribution < room.config.baseStake;
+          bet.textContent = `底注 ${seat.player.handContribution}${allIn ? '（全下）' : ''}`;
+          card.append(bet);
+        } else if (seat.player.isBanker) {
+          bet.textContent = '庄家';
+          card.append(bet);
+        } else if (seat.player.stakeMult > 0) {
+          bet.textContent = `盲注 ×${seat.player.stakeMult} · ${room.config.baseStake * seat.player.stakeMult}`;
+          card.append(bet);
+        }
+      }
+
+      // 庄家已移交时，给新庄家标注「下局庄」
+      if (
+        dnMode(room) === 'banker'
+        && room.hand?.status === 'finished'
+        && room.banker?.seatIndex === seat.index
+        && !seat.player.isBanker
+      ) {
+        const next = document.createElement('div');
+        next.className = 'dn-next-banker';
+        next.textContent = '下局庄';
+        card.append(next);
+      }
+
+      // 摊牌后展示各家牌型
+      if (room.hand?.revealed && seat.player.handLabel) {
+        const label = document.createElement('div');
+        label.className = 'dn-hand-label';
+        label.textContent = seat.player.handLabel;
+        card.append(label);
+      }
+
+      const status = document.createElement('div');
+      status.className = 'seat-status';
+      status.textContent = dnSeatTags(room, seat.player);
+      card.append(status);
+
+      if (room.self?.isHost && seat.player.targetToken && !seat.player.isHost && !seat.player.isViewer) {
+        const manageButton = document.createElement('button');
+        manageButton.type = 'button';
+        manageButton.className = 'ghost seat-manage-btn';
+        manageButton.textContent = seat.player.isBot ? '移除 AI' : '踢出';
+        manageButton.disabled = room.summary?.handStatus === 'running';
+        manageButton.addEventListener('click', () => manageMember(seat.player));
+        card.append(manageButton);
+      }
+
+      elements.seatGrid.append(card);
+      placeActionBubble(card);
+    });
+  }
+
+  // ===== 斗牛手牌：整行放大 + 点击选 3 张牛牌（欢乐斗牛式） =====
+  function dnCardPoints(card) {
+    const rank = card?.[0];
+    if (rank === 'A') return 1;
+    if (rank === 'T' || rank === 'J' || rank === 'Q' || rank === 'K') return 10;
+    const numeric = Number(rank);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  function dnBullSum(cards) {
+    return cards.reduce((sum, card) => sum + dnCardPoints(card), 0);
+  }
+
+  function renderDnHand(room) {
+    const me = room.players.find((player) => player.isViewer);
+    const cards = (me?.holeCards ?? []).filter((card) => card && card !== '??');
+    const handId = room.hand?.id ?? null;
+
+    if (handId !== state.dnHandId) {
+      state.dnHandId = handId;
+      state.dnSelected = [];
+    }
+    // 已选牌或已结束 → 清空选择态，避免带到下一局
+    if (me?.pickDone || room.hand?.status === 'finished') state.dnSelected = [];
+    state.dnSelected = state.dnSelected.filter((index) => index < cards.length);
+
+    const canPick = Boolean(room.hand?.availableActions?.canPick) && cards.length === 5 && !me?.pickDone;
+    const signature = JSON.stringify([
+      room.code,
+      handId,
+      cards,
+      state.dnSelected,
+      canPick,
+      me?.bullCards ?? null,
+      me?.pickDone ?? false,
+      room.hand?.status ?? '',
+    ]);
+    if (!shouldRender('dnHand', signature)) return;
+
+    const prevScrollTop = elements.viewerCards.scrollTop;
+    elements.viewerCards.innerHTML = '';
+    // 斗牛自己看牌，不需要"查看"按钮兜底
+    elements.peekCardsBtn.classList.add('hidden');
+
+    if (!cards.length) {
+      elements.viewerCards.textContent = me && me.seatIndex !== null
+        ? (room.hand?.status === 'running' ? '等待发牌' : '本局未参与')
+        : '未坐下';
+      return;
+    }
+
+    const bullSet = new Set(me?.bullCards ?? []);
+    cards.forEach((card, index) => {
+      const cardEl = renderCard(card);
+      cardEl.classList.add('dn-hand-card');
+      cardEl.classList.toggle('selected', state.dnSelected.includes(index));
+      // 已选过牌：高亮自己挑的三张牛牌
+      if (me?.pickDone && bullSet.has(card)) cardEl.classList.add('bull');
+      if (canPick) {
+        cardEl.addEventListener('click', () => toggleDnCard(index, cards.length));
+      }
+      elements.viewerCards.append(cardEl);
+    });
+    elements.viewerCards.scrollTop = prevScrollTop;
+  }
+
+  // 点击选牌：最多选 3 张，再点一次取消；同步刷新手牌与操作栏
+  function toggleDnCard(index, total) {
+    const selected = state.dnSelected.includes(index)
+      ? state.dnSelected.filter((item) => item !== index)
+      : [...state.dnSelected, index].slice(-3);
+    state.dnSelected = selected.slice(0, Math.min(3, total));
+    if (state.room) {
+      renderDnHand(state.room);
+      renderDnActions(state.room);
+    }
+  }
+
+  function renderDnActions(room) {
+    elements.actionPanel.innerHTML = '';
+    state.turnDeadlineAt = room.hand?.status === 'running' ? (room.hand.turnDeadlineAt ?? null) : null;
+    const actions = room.hand?.availableActions;
+
+    if (!actions) {
+      const hint = document.createElement('div');
+      hint.className = 'room-meta';
+      if (!room.hand) {
+        hint.textContent = '先加入或创建房间';
+      } else if (room.hand.status === 'finished') {
+        hint.textContent = '本局已结束';
+      } else if (room.hand.phase === 'pick') {
+        hint.textContent = '等待其他玩家选牛牌';
+      } else if (dnMode(room) === 'none') {
+        hint.textContent = `无庄模式：底注已自动收取，最大者按「底分 × 牌型倍数」向每家收取`;
+      } else {
+        hint.textContent = '等待其他玩家完成盲注';
+      }
+      elements.actionPanel.append(hint);
+      updateTurnCountdown();
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'action-grid dn-action-grid';
+
+    if (actions.phase === 'pick') {
+      // ===== 选牛牌阶段 =====
+      const me = room.players.find((player) => player.isViewer);
+      const cards = (me?.holeCards ?? []).filter((card) => card && card !== '??');
+      const selected = state.dnSelected.map((index) => cards[index]).filter(Boolean);
+      const valid = selected.length === 3 && dnBullSum(selected) % 10 === 0;
+
+      if (actions.isSpecial) {
+        const banner = document.createElement('div');
+        banner.className = 'dn-special-banner';
+        banner.textContent = `${actions.specialLabel}！无需选牌，直接确定`;
+        grid.append(banner);
+        const okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.className = 'dn-mult-btn';
+        okBtn.textContent = '确定';
+        okBtn.addEventListener('click', () => sendAction({ type: 'pick', cards: cards.slice(0, 3) }));
+        grid.append(okBtn);
+      } else {
+        const status = document.createElement('div');
+        status.className = 'dn-pick-status';
+        if (selected.length < 3) {
+          status.textContent = `请选出 3 张牛牌（已选 ${selected.length}/3）`;
+        } else if (valid) {
+          status.textContent = `已选 ${selected.map((c) => c[0] === 'T' ? '10' : c[0]).join(' ')}：凑成整十 ✓`;
+        } else {
+          status.textContent = `这三张点数和为 ${dnBullSum(selected)}，凑不出整十，请重新选择`;
+        }
+        grid.append(status);
+
+        const okBtn = document.createElement('button');
+        okBtn.type = 'button';
+        okBtn.className = 'dn-mult-btn';
+        okBtn.textContent = '确定';
+        okBtn.disabled = !valid;
+        okBtn.addEventListener('click', () => sendAction({ type: 'pick', cards: selected }));
+        grid.append(okBtn);
+
+        // 提示：自动挑一组凑得成整十的三张
+        const hintBtn = document.createElement('button');
+        hintBtn.type = 'button';
+        hintBtn.className = 'btn-check dn-hint-btn';
+        hintBtn.textContent = '提示';
+        hintBtn.addEventListener('click', () => {
+          const combo = dnFindBull(cards);
+          if (!combo) {
+            showToast('这副牌没有牛，请选择「没牛」', true);
+            return;
+          }
+          state.dnSelected = combo.map((card) => cards.indexOf(card));
+          renderDnHand(state.room);
+          renderDnActions(state.room);
+        });
+        grid.append(hintBtn);
+
+        const noBullBtn = document.createElement('button');
+        noBullBtn.type = 'button';
+        noBullBtn.className = 'btn-fold';
+        noBullBtn.textContent = '没牛';
+        noBullBtn.addEventListener('click', () => {
+          // 有牛却选没牛 → 二次确认，避免误触
+          if (dnFindBull(cards)) {
+            showToast('这副牌有牛，请先取消或直接点「确定」', true);
+            return;
+          }
+          sendAction({ type: 'nobull' });
+        });
+        grid.append(noBullBtn);
+      }
+
+      elements.actionPanel.append(buildTurnCountdown(), grid);
+      const tip = document.createElement('div');
+      tip.className = 'room-meta';
+      tip.textContent = actions.isSpecial
+        ? '特殊牌型由整手牌决定，与选哪三张无关'
+        : '选出 3 张点数之和为 10 的倍数的牌，剩余 2 张的个位数即牛数';
+      elements.actionPanel.append(tip);
+      updateTurnCountdown();
+      return;
+    }
+
+    // ===== 盲注阶段：发牌前决定，看不到自己的牌 =====
+    for (const mult of actions.betOptions ?? []) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'dn-mult-btn';
+      button.textContent = `盲注 ×${mult}`;
+      button.title = `底分 ${actions.baseStake} × ${mult}`;
+      button.addEventListener('click', () => sendAction({ type: 'bet', amount: mult }));
+      grid.append(button);
+    }
+
+    const passBtn = document.createElement('button');
+    passBtn.type = 'button';
+    passBtn.className = 'btn-fold';
+    passBtn.textContent = '放弃本局';
+    passBtn.addEventListener('click', () => sendAction({ type: 'pass' }));
+    grid.append(passBtn);
+
+    elements.actionPanel.append(buildTurnCountdown(), grid);
+
+    const hint = document.createElement('div');
+    hint.className = 'room-meta';
+    hint.textContent = `发牌前盲注；结算 = 底分 ${actions.baseStake} × 闲家倍数 × 赢家牌型倍数`;
+    elements.actionPanel.append(hint);
+
+    updateTurnCountdown();
+  }
+
+  // 从 5 张里找一组凑得成整十的三张（提示按钮用）
+  function dnFindBull(cards) {
+    for (let i = 0; i < cards.length - 2; i += 1) {
+      for (let j = i + 1; j < cards.length - 1; j += 1) {
+        for (let k = j + 1; k < cards.length; k += 1) {
+          if (dnBullSum([cards[i], cards[j], cards[k]]) % 10 === 0) {
+            return [cards[i], cards[j], cards[k]];
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  function renderDnHandEndResults(room) {
+    const modalResults = document.getElementById('modalResults');
+    const winners = room.hand.winners || [];
+    const losers = room.hand.losers || [];
+    const results = room.hand.results || [];
+    const bankerSeat = room.hand.bankerSeat;
+
+    const noBanker = dnMode(room) === 'none';
+    const pot = room.hand.finalPot ?? 0;
+    const baseStake = room.config.baseStake;
+
+    const header = document.createElement('div');
+    header.className = 'pot-summary';
+    if (noBanker) {
+      const top = winners[0];
+      // 无庄：赢家按「底分 × 赢家牌型倍数」向每位输家收取
+      const mult = top?.mult ?? 1;
+      header.innerHTML = top
+        ? `🐂 无庄模式 · <strong>${top.name}</strong> ${top.handLabel ?? ''} ×${mult} 通吃 <strong>${pot}</strong>（每位输家付 ${baseStake * mult}）`
+        : `🐂 无庄模式 · 底池 <strong>${pot}</strong>`;
+    } else {
+      const bankerEntry = results.find((entry) => entry.seatIndex === bankerSeat);
+      header.innerHTML = bankerEntry
+        ? `🐂 庄家 <strong>${bankerEntry.name}</strong> · ${bankerEntry.handLabel || ''}`
+        : '🐂 本局无人坐庄';
+    }
+    modalResults.appendChild(header);
+
+    const appendBlock = (headingText, entries, positive) => {
+      if (!entries.length) return;
+      const block = document.createElement('div');
+      block.className = 'showdown-block';
+      const heading = document.createElement('div');
+      heading.className = 'showdown-heading';
+      heading.textContent = headingText;
+      block.appendChild(heading);
+
+      for (const entry of entries) {
+        const resultDiv = document.createElement('div');
+        resultDiv.className = positive ? 'player-result' : 'player-result player-result-loser';
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'player-result-name';
+        // 无庄：显示该家实际付出的筹码（底注 + 按赢家牌型倍数的差额）
+        const tagText = noBanker
+          ? `付 ${entry.stake ?? baseStake}`
+          : (entry.isBanker ? '庄' : `×${entry.stakeMult}`);
+        nameDiv.textContent = `${entry.name}（${tagText}）`;
+
+        const cardsDiv = document.createElement('div');
+        cardsDiv.className = 'player-result-cards';
+        const bullSet = new Set(entry.bullCards ?? []);
+        (entry.holeCards ?? []).forEach((cardCode) => {
+          if (!cardCode || cardCode === '??') return;
+          const cardEl = renderCard(cardCode);
+          // 高亮玩家亲手选出的三张牛牌
+          if (bullSet.has(cardCode)) cardEl.classList.add('dn-bull-card');
+          cardsDiv.appendChild(cardEl);
+        });
+
+        const handLabelDiv = document.createElement('div');
+        handLabelDiv.className = 'player-result-hand';
+        handLabelDiv.textContent = `${entry.handLabel || '未发牌'} ×${entry.mult}`;
+
+        const amountDiv = document.createElement('div');
+        amountDiv.className = 'player-result-amount';
+        // 无庄赢家：payout 是拿走的底池，amount 是净赢（已扣自己的底注）
+        amountDiv.textContent = (positive && noBanker && entry.payout)
+          ? `通吃 ${entry.payout}，净赢 +${entry.amount} 筹码`
+          : `${positive ? '+' : '-'}${entry.amount} 筹码`;
+        amountDiv.style.color = positive ? '#4ade80' : '#f87171';
+
+        resultDiv.appendChild(nameDiv);
+        if (cardsDiv.childElementCount > 0) resultDiv.appendChild(cardsDiv);
+        resultDiv.appendChild(handLabelDiv);
+        resultDiv.appendChild(amountDiv);
+        block.appendChild(resultDiv);
+      }
+      modalResults.appendChild(block);
+    };
+
+    appendBlock(`赢家（+${winners.reduce((sum, item) => sum + item.amount, 0)}）`, winners, true);
+    appendBlock(`输家（-${losers.reduce((sum, item) => sum + item.amount, 0)}）`, losers, false);
+
+    // 未参与或打平的玩家
+    const neutral = results.filter((entry) => entry.delta === 0);
+    if (neutral.length) {
+      const block = document.createElement('div');
+      block.className = 'showdown-block';
+      const heading = document.createElement('div');
+      heading.className = 'showdown-heading';
+      heading.textContent = '未参与结算';
+      block.appendChild(heading);
+      for (const entry of neutral) {
+        const row = document.createElement('div');
+        row.className = 'player-result player-result-loser';
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'player-result-name';
+        nameDiv.textContent = entry.isBanker ? `${entry.name}（庄）` : entry.name;
+        const labelDiv = document.createElement('div');
+        labelDiv.className = 'player-result-hand';
+        labelDiv.textContent = entry.handLabel || '未下注';
+        row.append(nameDiv, labelDiv);
+        block.appendChild(row);
+      }
+      modalResults.appendChild(block);
+    }
+
+    // 庄家操作区：结算弹窗内的续庄 / 移交入口
+    renderDnBankerControl(room, elements.dnBankerModalControl);
+  }
+
+
   // ===== Root 管理面板：密钥加载全部房间、强制删除 =====
-  const GAME_BADGES = { texas: '德州', zjh: '炸金花', gdy: '干瞪眼' };
 
   function openRootModal() {
     // 不回显已保存的密钥（输入框留空；后台保存的密钥仍自动用于请求）

@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from 'socket.io';
 import { GameManager, makeToken, DEFAULT_CONFIG } from './game-engine.js';
 import { ZjhManager, ZJH_DEFAULT_CONFIG } from './zjh-engine.js';
 import { GdyManager, GDY_DEFAULT_CONFIG } from './gdy-engine.js';
+import { DnManager, DN_DEFAULT_CONFIG } from './douniu-engine.js';
 import { RoomStore } from './store.js';
 
 // 读取项目根目录的 .env（存在时覆盖同名环境变量，使改配置只需重启进程）
@@ -39,7 +40,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
   // root 管理密钥：环境变量 ROOT_KEY 可覆盖，默认 root123（仅适合内网/私人部署，公网务必改掉）
   const rootKey = process.env.ROOT_KEY ?? 'root123';
 
-  // 引擎 tick 周期（毫秒）：默认 200ms，三引擎共用，环境变量 GAME_TICK_MS 可调。
+  // 引擎 tick 周期（毫秒）：默认 200ms，四引擎共用，环境变量 GAME_TICK_MS 可调。
   // 放在 createRealtimeApp 内读取，确保根目录 .env 已被 loadEnvFile() 加载。
   // 调小只会让机器人行动与超时托管更及时；调大则机器人出牌变慢。
   const rawTickMs = process.env.GAME_TICK_MS;
@@ -50,7 +51,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
 
   let io = null;
 
-  // 三款游戏共用的广播回调
+  // 四款游戏（德州/炸金花/干瞪眼/斗牛）共用的广播回调
   function managerCallbacks() {
     return {
       onUpdate(room) {
@@ -93,35 +94,50 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     };
   }
 
-  // 先建德州 manager（占位回调），再建炸金花/干瞪眼 manager，最后互挂全局房间码查重
-  const managerForGame = (gameType) => (gameType === 'zjh' ? zjhManager : gameType === 'gdy' ? gdyManager : gameManager);
+  // 先建德州 manager（占位回调），再建炸金花/干瞪眼/斗牛 manager，最后互挂全局房间码查重
+  const otherCodes = (...exclude) => {
+    const all = [gameManager, zjhManager, gdyManager, dnManager];
+    const codes = new Set();
+    for (const manager of all) {
+      if (!manager || exclude.includes(manager)) continue;
+      for (const code of manager.rooms.keys()) codes.add(code);
+    }
+    return codes;
+  };
+  const managerForGame = (gameType) => {
+    if (gameType === 'zjh') return zjhManager;
+    if (gameType === 'gdy') return gdyManager;
+    if (gameType === 'dn') return dnManager;
+    return gameManager;
+  };
   const gameManager = new GameManager(store, {
     ...managerCallbacks(),
     config: DEFAULT_CONFIG,
-    occupiedCodes: () => new Set([
-      ...(zjhManager?.rooms.keys() ?? []),
-      ...(gdyManager?.rooms.keys() ?? []),
-    ]),
+    occupiedCodes: () => otherCodes(gameManager),
   });
   const zjhManager = new ZjhManager(store, {
     ...managerCallbacks(),
     config: ZJH_DEFAULT_CONFIG,
-    occupiedCodes: () => new Set([
-      ...gameManager.rooms.keys(),
-      ...(gdyManager?.rooms.keys() ?? []),
-    ]),
+    occupiedCodes: () => otherCodes(zjhManager),
   });
   const gdyManager = new GdyManager(store, {
     ...managerCallbacks(),
     config: GDY_DEFAULT_CONFIG,
-    occupiedCodes: () => new Set([
-      ...gameManager.rooms.keys(),
-      ...zjhManager.rooms.keys(),
-    ]),
+    occupiedCodes: () => otherCodes(gdyManager),
+  });
+  const dnManager = new DnManager(store, {
+    ...managerCallbacks(),
+    config: DN_DEFAULT_CONFIG,
+    occupiedCodes: () => otherCodes(dnManager),
   });
 
   function mergedRooms() {
-    return [...gameManager.listRooms(), ...zjhManager.listRooms(), ...gdyManager.listRooms()];
+    return [
+      ...gameManager.listRooms(),
+      ...zjhManager.listRooms(),
+      ...gdyManager.listRooms(),
+      ...dnManager.listRooms(),
+    ];
   }
 
   let roomsListTimer = null;
@@ -156,6 +172,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     if (gameManager.rooms.has(key)) return gameManager;
     if (zjhManager.rooms.has(key)) return zjhManager;
     if (gdyManager.rooms.has(key)) return gdyManager;
+    if (dnManager.rooms.has(key)) return dnManager;
     return null;
   }
 
@@ -260,7 +277,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     socket.on('room:create', (payload = {}, ack) => {
       try {
         const token = payload.token || socket.data.token || makeToken();
-        const gameType = payload.gameType === 'zjh' ? 'zjh' : payload.gameType === 'gdy' ? 'gdy' : 'texas';
+        const gameType = ['zjh', 'gdy', 'dn'].includes(payload.gameType) ? payload.gameType : 'texas';
         const manager = managerForGame(gameType);
         const created = manager.createRoom({
           token,
@@ -365,6 +382,22 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
         const manager = locateManager(roomCode);
         if (!manager) throw new Error('房间不存在');
         const room = manager.toggleReady(roomCode, token);
+        ok(ack, { room: manager.getRoomView(room.code, token) });
+      } catch (error) {
+        fail(ack, error);
+      }
+    });
+
+    // 斗牛：本局结束后由庄家决定下一局续庄 / 移交给指定玩家
+    socket.on('room:banker', (payload = {}, ack) => {
+      try {
+        const roomCode = payload.roomCode || socket.data.roomCode;
+        const token = payload.token || socket.data.token;
+        const manager = locateManager(roomCode);
+        if (!manager) throw new Error('房间不存在');
+        if (manager !== dnManager) throw new Error('该游戏没有庄家');
+        const action = payload.action === 'transfer' ? 'transfer' : 'keep';
+        const room = manager.setBanker(roomCode, token, action, payload.targetToken ?? null);
         ok(ack, { room: manager.getRoomView(room.code, token) });
       } catch (error) {
         fail(ack, error);
@@ -519,6 +552,11 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     } catch (error) {
       console.error('gdyManager.tick error:', error);
     }
+    try {
+      dnManager.tick();
+    } catch (error) {
+      console.error('dnManager.tick error:', error);
+    }
   }, tickMs);
   timer.unref();
 
@@ -529,6 +567,7 @@ export function createRealtimeApp({ store = new RoomStore() } = {}) {
     manager: gameManager,
     zjhManager,
     gdyManager,
+    dnManager,
     rootKey,
     store,
     close() {
